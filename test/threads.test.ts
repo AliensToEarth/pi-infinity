@@ -9,6 +9,7 @@ import { Emitter, type OutgoingMessage } from "../extensions/lib/events.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
 import { GitSandbox } from "../extensions/lib/sandbox.ts";
 import { JjSandbox } from "../extensions/lib/sandbox-jj.ts";
+import { hasJj } from "./helpers.ts";
 import { ThreadService, type ThreadIO } from "../extensions/lib/thread-service.ts";
 import {
   AGENT_FORK,
@@ -359,39 +360,43 @@ test("R-S7 listing and pruning sandboxes", async () => {
   assert.equal(await h.svc.pruneSandboxes({ ...h.io, confirm: undefined }), "pruning needs a UI to confirm");
 });
 
-test("R-S1 R-S5 auto backend picks jj for a jj repository and squashes into the working copy", async () => {
-  const repo = tmp("pi-inf-jjrepo-");
-  const cfg = join(tmp("pi-inf-jjcfg-"), "config.toml");
-  writeFileSync(cfg, "");
-  const env = { ...process.env, JJ_CONFIG: cfg, JJ_USER: "t", JJ_EMAIL: "t@example.org" };
-  execFileSync("jj", ["git", "init", "--colocate", repo], { env, stdio: "ignore" });
-  writeFileSync(join(repo, "a.txt"), "one\n");
-  execFileSync("jj", ["commit", "-m", "init"], { cwd: repo, env, stdio: "ignore" });
+test(
+  "R-S1 R-S5 auto backend picks jj for a jj repository and squashes into the working copy",
+  { skip: hasJj ? false : "jj is not installed" },
+  async () => {
+    const repo = tmp("pi-inf-jjrepo-");
+    const cfg = join(tmp("pi-inf-jjcfg-"), "config.toml");
+    writeFileSync(cfg, "");
+    const env = { ...process.env, JJ_CONFIG: cfg, JJ_USER: "t", JJ_EMAIL: "t@example.org" };
+    execFileSync("jj", ["git", "init", "--colocate", repo], { env, stdio: "ignore" });
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    execFileSync("jj", ["commit", "-m", "init"], { cwd: repo, env, stdio: "ignore" });
 
-  const files = new ThreadFiles(tmp("pi-inf-agent-"));
-  const sent: OutgoingMessage[] = [];
-  const logger = memoryLogger();
-  const emitter = new Emitter({ send: (m) => void sent.push(m), spillDir: tmp("pi-inf-sp-"), maxChars: 4000, seenCap: 100, logger });
-  const sandboxes = [new JjSandbox(logger, env), new GitSandbox(logger)];
-  const svc = new ThreadService({ identity: identify({}, files), files, sandboxes, emitter, config: DEFAULT_CONFIG, logger, pollMs: 20 });
-  const sessionDir = tmp("pi-inf-sess-");
-  const launches: Array<{ cwd?: string; name: string }> = [];
-  const io: ThreadIO = {
-    cwd: repo,
-    launch: async (a) => {
-      launches.push(a);
-      return { sessionFile: join(sessionDir, `${a.name}.jsonl`) };
-    },
-    sendToChild: async () => {},
-    confirm: async () => true,
-  };
-  const { id } = await svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, io);
-  assert.ok(existsSync(join(launches[0].cwd as string, "a.txt")));
-  writeFileSync(join(launches[0].cwd as string, "b.txt"), "from child\n");
-  await svc.childExited(id);
-  assert.match(sent[0].content, /b\.txt/);
-  const msg = await svc.squash(id, {}, io);
-  assert.match(msg, /left in your working-copy change/);
-  assert.equal(readFileSync(join(repo, "b.txt"), "utf8"), "from child\n");
-  svc.dispose();
-});
+    const files = new ThreadFiles(tmp("pi-inf-agent-"));
+    const sent: OutgoingMessage[] = [];
+    const logger = memoryLogger();
+    const emitter = new Emitter({ send: (m) => void sent.push(m), spillDir: tmp("pi-inf-sp-"), maxChars: 4000, seenCap: 100, logger });
+    const sandboxes = [new JjSandbox(logger, env), new GitSandbox(logger)];
+    const svc = new ThreadService({ identity: identify({}, files), files, sandboxes, emitter, config: DEFAULT_CONFIG, logger, pollMs: 20 });
+    const sessionDir = tmp("pi-inf-sess-");
+    const launches: Array<{ cwd?: string; name: string }> = [];
+    const io: ThreadIO = {
+      cwd: repo,
+      launch: async (a) => {
+        launches.push(a);
+        return { sessionFile: join(sessionDir, `${a.name}.jsonl`) };
+      },
+      sendToChild: async () => {},
+      confirm: async () => true,
+    };
+    const { id } = await svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, io);
+    assert.ok(existsSync(join(launches[0].cwd as string, "a.txt")));
+    writeFileSync(join(launches[0].cwd as string, "b.txt"), "from child\n");
+    await svc.childExited(id);
+    assert.match(sent[0].content, /b\.txt/);
+    const msg = await svc.squash(id, {}, io);
+    assert.match(msg, /left in your working-copy change/);
+    assert.equal(readFileSync(join(repo, "b.txt"), "utf8"), "from child\n");
+    svc.dispose();
+  },
+);

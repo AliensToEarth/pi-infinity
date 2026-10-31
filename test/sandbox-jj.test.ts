@@ -15,6 +15,7 @@ import { test } from "node:test";
 import { JjSandbox } from "../extensions/lib/sandbox-jj.ts";
 import { validateSandboxId } from "../extensions/lib/sandbox.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
+import { hasJj } from "./helpers.ts";
 
 const exec = promisify(execFile);
 
@@ -76,7 +77,7 @@ async function summary(cwd: string, env: TestEnv): Promise<string> {
 
 // Subtests run in parallel: each builds its own throwaway repo in a private
 // temp dir, so they cannot interfere, and the file stays fast.
-test("jj sandbox backend", { concurrency: 8 }, (t) => {
+test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not installed" }, (t) => {
   t.test("R-S1 create builds isolated workspaces that never touch the main working copy", async (t) => {
     const { repo, env } = await initRepo(t);
     const atBefore = await commitId(repo, env, "@");
