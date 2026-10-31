@@ -1,12 +1,122 @@
 # pi-infinity
 
 Design rules from the [Infinity](https://github.com/hydro-project/infinity) agent runtime, as a
-pi package. Slow work never blocks the turn, every asynchronous outcome comes back as one
-bounded message, timers survive restarts, and parallel code changes happen in isolated git
-worktrees or jj workspaces.
+pi package.
 
-Threads are built on [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents).
-The reasoning behind every feature is in [`SPEC.md`](SPEC.md).
+An agent that waits is an agent that wastes time and tokens. pi-infinity lets pi dispatch slow
+work, yield, and pick the result up later. Everything that happens in the background comes
+back as one small, bounded message, and parallel edits happen in isolated checkouts instead of
+your working directory.
+
+* [Why](#why)
+* [How it works](#how-it-works)
+* [A short walkthrough](#a-short-walkthrough)
+* [Install](#install)
+* [Tools](#tools)
+* [Guards](#guards)
+* [Threads and sandboxes](#threads-and-sandboxes)
+* [Commands](#commands)
+* [Configuration](#configuration)
+* [Limits](#limits)
+* [Troubleshooting](#troubleshooting)
+* [Development](#development)
+
+## Why
+
+Out of the box, a pi turn blocks while a tool runs. That produces three habits that cost time
+and context:
+
+1. The model **waits** for slow commands such as builds, test suites and dev servers.
+2. The model **polls**, with `sleep` loops and `tail -f`, to find out whether something finished.
+3. The model **floods its context** with unbounded output from tools.
+
+Infinity, a Rust runtime for large numbers of concurrent agents, solves the same problem with a
+small set of rules. An agent step never blocks on anything external. Slow work is dispatched
+and the agent yields. Whatever the agent was waiting for later shows up as a message. Child
+threads exist mainly to keep the parent's context clean. pi-infinity carries those rules over
+to pi. It builds on [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents)
+for the thread transport instead of replacing it. The full research and the reasoning behind
+each feature are in [`SPEC.md`](SPEC.md).
+
+## How it works
+
+```
+                 +-------------------------------+
+   model  -----> | bg_run / sleep / spawn_thread |  returns immediately
+                 +---------------+---------------+
+                                 |
+          process, timer or child thread runs on its own
+                                 |
+                                 v
+                 +-------------------------------+
+                 |   emitter: dedup, size cap,   |
+                 |   one `infinity-event` type   |
+                 +---------------+---------------+
+                                 |  steer message, triggers a turn
+                                 v
+   model  <----- [infinity event] job_exit | job_match | timer | child_report | child_closed
+```
+
+### Everything is a message
+
+Job exits, watched output lines, timer wake-ups and child reports all arrive as the same kind
+of message, `infinity-event`, with the same shape:
+
+```
+[infinity event] job_exit from bg_run (call_abc)
+original_args: {"command":"npm test"}
+---
+job j1 "npm" finished: exited (exit code 1, 42s)
+...
+```
+
+The emitter guarantees three things for every event:
+
+* **Delivered once.** Events carry a stable id, and a second event with the same id is dropped.
+* **Bounded.** A body over 4000 characters is saved to a file and replaced by its head, tail and
+  the file path, so one noisy event cannot flood the context.
+* **Interruptible.** Events are steer messages. If you type something while one is pending, your
+  message goes first.
+
+### Yielding instead of waiting
+
+The sleep tools end the turn without another model call. The agent really stops until
+something wakes it, which costs nothing while idle. The wake-up is either a timer event or
+any other event or message. Timers are written to the session, so a timer set before a restart
+still fires afterwards. If its time passed while pi was closed, it fires at once with a note
+saying it was late.
+
+### Guards keep bad habits out
+
+Two small hooks make the right behavior the easy path. One refuses commands that would hold
+the turn open and tells the model what to use instead. The other catches oversized tool
+results and spills them to a file. Details are in [Guards](#guards).
+
+### Threads, context and isolation
+
+`spawn_thread` starts a child agent in its own tmux pane and returns at once. The caller picks
+how much context the child gets: an empty history for independent work, or a fork of the
+current conversation. With `sandbox: true` the child also gets its own git worktree or jj
+workspace, so parallel edits never collide and your working directory stays untouched until
+you approve a merge. See [Threads and sandboxes](#threads-and-sandboxes).
+
+## A short walkthrough
+
+You ask for a refactor and a test run in a large repository.
+
+1. The model starts the suite with `bg_run`, for example `npm test`, and gets back `Job j1
+   started`. It does not wait.
+2. It spawns two fresh-context threads with `sandbox: true`, one per package, with
+   self-contained instructions. Each thread gets its own branch and checkout.
+3. It has nothing left to do, so it calls `sleep_until_event` and the turn ends.
+4. The test run exits. An event arrives with the exit code and the last lines of output, and
+   the model wakes up and reads it.
+5. The threads finish with `close_thread`. Each close event lists the diff stat of that
+   thread's branch. The model reviews them and calls `squash_sandbox`.
+6. You get a confirmation prompt. The changes land staged in your tree, uncommitted, for you
+   to review and commit.
+
+At no point did the model sit in a blocked tool call, run a polling loop, or read a huge log.
 
 ## Requirements
 
@@ -41,28 +151,35 @@ npm install
 | `report_to_parent` | Thread sessions only. Intermediate report. |
 | `close_thread` | Thread sessions only. Final report, ends the session. |
 
-## Events
+### Background jobs in detail
 
-Everything asynchronous comes back as a message of type `infinity-event`:
-
-```
-[infinity event] job_exit from bg_run (call_abc)
-original_args: {"command":"npm test"}
----
-job j1 "npm" finished: exited (exit code 1, 42s)
-...
-```
-
-Events are deduplicated by id, delivered as steer messages (so they queue behind user input),
-and capped at 4000 characters. A longer body is written to a file and replaced by its head,
-tail and the path.
+* The command runs through `/bin/sh -c` in its own process group, so a cancel also reaches
+  grandchildren.
+* All output goes to a log file. `bg_output` reads the tail without waiting, or a byte range
+  from an offset, at most 8000 bytes per call.
+* `watch` takes regex sources. Matching lines are batched and sent as `job_match` events, at
+  most six per minute per job by default, so a chatty stream stays cheap. Further matches are
+  counted and summarized in the exit event. Set `associative: true` when every match belongs in
+  the conversation and the rate limit should be off.
+* `timeout_seconds` stops a job that runs too long. At most eight jobs run at once.
+* A user interrupt does not cancel jobs, because background work is the point. Jobs are
+  cancelled when the session ends.
 
 ## Guards
 
-* **Bash guard.** `sleep 60`, `tail -f`, `watch`, endless loops and foreground dev servers are
-  refused with advice to use `bg_run` or `sleep`. Bash calls without a timeout get 180 s.
-* **Result guard.** A tool result above 40000 characters is saved to a file and replaced by its
-  head, tail and the path. `read` is exempt so the file can be paged through.
+**Bash guard.** The classifier refuses `sleep 60`, `tail -f`, `watch`, endless loops and
+foreground dev servers such as `npm run dev` or `python -m http.server`, with a message that
+points to `bg_run` or `sleep`. It is deliberately narrow:
+
+* Commands inside quotes are not scanned.
+* Commands that are backgrounded with `&`, or wrapped in `nohup`, `setsid` or `timeout`, pass.
+* Short sleeps pass. The limit is 20 seconds.
+
+Bash calls that have no timeout get one of 180 seconds.
+
+**Result guard.** A tool result over 40000 characters is saved to a file and replaced by its
+head, tail and the path, with a hint to page through it with `read`. `read` itself is exempt,
+so the saved file can be read in pieces without being spilled again.
 
 ## Threads and sandboxes
 
@@ -70,17 +187,26 @@ tail and the path.
 spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, sandbox: true })
 ```
 
-* `fresh_context: true` starts the child with an empty history (agent `thread-fresh`).
-  Without it the child forks your conversation (agent `thread-fork`).
-* `child_of` must be your real stack. A forked child that tries to replay its parent's spawn
-  plan is rejected.
-* `sandbox: true` gives the child its own checkout under `.pi/sandboxes/<id>` on a
+* **Fresh or forked context.** `fresh_context: true` starts the child with an empty history
+  (agent `thread-fresh`), which suits independent work and long parent conversations. The
+  instructions must then be self-contained. Without it the child forks your conversation
+  (agent `thread-fork`).
+* **Stack check.** `child_of` must be the caller's real thread stack, root first. A forked
+  child inherits its parent's plans, including pending `spawn_thread` calls. The check rejects
+  those so the child does not run them again.
+* **Reports and closing.** A child sends `report_to_parent` for intermediate results and ends
+  with `close_thread`. A child that exits without closing is closed for it.
+* **Sandboxes.** `sandbox: true` gives the child a checkout under `.pi/sandboxes/<id>` on a
   `sandbox-<id>` branch (git worktree) or bookmark (jj workspace). The backend is chosen
-  automatically, jj first. When the child closes, its work is committed there and the event
-  shows the diff stat. A child that exits without closing is closed for it.
-* `squash_sandbox` merges the branch into the caller's tree. In the main session the changes
-  are only staged (git) or left in the working-copy change (jj), and the user confirms first.
-  Inside a sandboxed thread the result is committed.
+  automatically and jj wins when the repository uses it. When the child closes, its work is
+  committed there and the event shows the diff stat.
+* **Merging back.** `squash_sandbox` merges the branch into the caller's tree. In your main
+  session the changes are only staged (git) or left in the working-copy change (jj), and you
+  confirm first. Inside a sandboxed thread the result is committed. A conflict aborts the
+  squash and leaves both sides unchanged.
+* **Depth.** Threads can spawn threads, down to four levels.
+
+Your main session is never moved into a sandbox. It is your own working directory.
 
 ## Commands
 
@@ -92,10 +218,13 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
 | `/infinity prune` | Delete merged sandbox branches after confirmation |
 | `/infinity config` | Show the effective configuration |
 
+A status line shows the number of running jobs, pending timers and threads.
+
 ## Configuration
 
-`~/.pi/agent/infinity.json`, then `<project>/.pi/infinity.json`. Defaults live in
-`extensions/lib/config.ts` and the shape is documented in section 3.2 of `SPEC.md`.
+`~/.pi/agent/infinity.json`, then `<project>/.pi/infinity.json`, later files win. Defaults live
+in `extensions/lib/config.ts` and the shape is documented in section 3.2 of `SPEC.md`. Unknown
+or invalid keys are reported once and ignored.
 
 ```json
 { "bash": { "guard": "warn" }, "sandbox": { "backend": "git" } }
@@ -103,12 +232,21 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
 
 `bash.guard` is `block`, `warn` or `off`. `sandbox.backend` is `auto`, `git` or `jj`.
 
+## Limits
+
+* Running jobs end with the session. They are not resumed after a restart. Timers are.
+* Threads need tmux and pi-interactive-subagents.
+* A closing child wakes the parent twice, once for the close event and once for the subagents
+  extension's own exit message, which pi-infinity shortens to one line but cannot suppress.
+* The bash guard is pattern based and can block something harmless. Set `bash.guard` to `warn`.
+* Provider retries and context compaction stay with pi itself.
+
 ## Troubleshooting
 
 * `spawn_thread` says the subagent tools are missing: install pi-interactive-subagents and
   start pi inside tmux.
-* A thread starts without pi-infinity tools: run `./scripts/install.sh` again, it relinks
-  the two agent definitions.
+* A thread starts without pi-infinity tools: run `./scripts/install.sh` again, it relinks the
+  two agent definitions.
 * The guard blocks something harmless: set `bash.guard` to `warn`.
 * Errors from background machinery go to `<session artifacts>/infinity/infinity.log`.
 
@@ -119,7 +257,7 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
 npm run fmt        # fix formatting
 ```
 
-Read [`AGENTS.md`](AGENTS.md) first.
+Read [`AGENTS.md`](AGENTS.md) first. The layout is in section 3 of `SPEC.md`.
 
 ## License
 
