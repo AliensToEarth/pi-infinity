@@ -30,6 +30,8 @@ export interface ThreadSandbox {
 
 export interface ThreadRecord {
   id: string;
+  /** Absent on records written before the second transport existed, meaning interactive. */
+  transport?: "interactive" | "subagents";
   parentId: string;
   /** Ids from root to this thread, inclusive. */
   stack: string[];
@@ -78,10 +80,13 @@ export interface FrameOptions {
   fresh: boolean;
   instructions: string;
   sandbox?: { path: string; branch: string };
+  /** R-X9. Children of the subagents transport have built-in tools only. */
+  transport?: "interactive" | "subagents";
 }
 
-/** R-H3. Header every child sees first. */
+/** R-H3, R-X9. Header every child sees first. */
 export function frameTask(o: FrameOptions): string {
+  if (o.transport === "subagents") return frameBlockingTask(o);
   const parent = o.stack[o.stack.length - 2] ?? ROOT_ID;
   const lines = [
     `You are now INSIDE thread ${o.id}. Your thread stack is [${o.stack.join(", ")}]. Your parent is ${parent}.`,
@@ -102,6 +107,29 @@ export function frameTask(o: FrameOptions): string {
       3,
       0,
       `Your working directory is an isolated git worktree at ${o.sandbox.path} on branch ${o.sandbox.branch}. Edit only there. Your changes are committed for you when you close the thread.`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function frameBlockingTask(o: FrameOptions): string {
+  const parent = o.stack[o.stack.length - 2] ?? ROOT_ID;
+  const lines = [
+    `You are now INSIDE thread ${o.id}, started by ${parent}. Your context is fresh: you see only this message, so the instructions below are self-contained.`,
+    "You have the built-in tools only (read, write, edit, bash, grep, find, ls). You cannot spawn threads or message your parent.",
+    "",
+    "Instructions:",
+    o.instructions,
+    "",
+    "How to finish:",
+    "- Your LAST message is your final report to the parent. Make it short and concrete: what you did, what changed, what is left.",
+    "- There is no close_thread tool. Stopping after your final message ends the thread.",
+  ];
+  if (o.sandbox) {
+    lines.splice(
+      2,
+      0,
+      `Your working directory is an isolated checkout at ${o.sandbox.path} on branch ${o.sandbox.branch}. Edit only there. Your changes are committed for you when you finish.`,
     );
   }
   return lines.join("\n");

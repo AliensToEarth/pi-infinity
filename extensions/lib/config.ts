@@ -9,7 +9,7 @@ export interface InfinityConfig {
   events: { maxChars: number; seenCap: number };
   overflow: { maxChars: number; headChars: number; tailChars: number };
   timers: { max: number };
-  threads: { enabled: boolean; maxDepth: number };
+  threads: { enabled: boolean; maxDepth: number; transport: "auto" | "interactive" | "subagents" };
   sandbox: { root: string; autoCommit: boolean; backend: "auto" | "git" | "jj" };
 }
 
@@ -19,7 +19,7 @@ export const DEFAULT_CONFIG: InfinityConfig = {
   events: { maxChars: 4000, seenCap: 2000 },
   overflow: { maxChars: 40000, headChars: 6000, tailChars: 2000 },
   timers: { max: 32 },
-  threads: { enabled: true, maxDepth: 4 },
+  threads: { enabled: true, maxDepth: 4, transport: "auto" },
   sandbox: { root: ".pi/sandboxes", autoCommit: true, backend: "auto" },
 };
 
@@ -52,6 +52,8 @@ export function mergeConfig<T extends Json>(base: T, override: unknown, path: st
     } else if (typeof def === typeof value) {
       if (key === "guard" && !["block", "warn", "off"].includes(value as string)) {
         problems.push(`${here}: must be block, warn or off`);
+      } else if (key === "transport" && !["auto", "interactive", "subagents"].includes(value as string)) {
+        problems.push(`${here}: must be auto, interactive or subagents`);
       } else if (key === "backend" && !["auto", "git", "jj"].includes(value as string)) {
         problems.push(`${here}: must be auto, git or jj`);
       } else if (typeof value === "number" && (!Number.isFinite(value) || value < 0)) {

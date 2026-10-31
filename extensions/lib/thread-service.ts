@@ -2,6 +2,7 @@ import type { InfinityConfig } from "./config.ts";
 import type { Emitter } from "./events.ts";
 import type { Logger } from "./log.ts";
 import type { SandboxBackend } from "./sandbox.ts";
+import { NO_TRANSPORT_MESSAGE } from "./transport.ts";
 import {
   AGENT_FORK,
   AGENT_FRESH,
@@ -20,7 +21,20 @@ import {
 } from "./threads.ts";
 
 /** What the adapter provides for one call. Kept narrow so tests can fake it. */
+export interface DetachedLaunch {
+  /** Settles when the child ended. Must not reject, failures are reported as isError. */
+  done: Promise<{ output: string; isError: boolean }>;
+  abort(): void;
+}
+
 export interface ThreadIO {
+  /**
+   * Which subagent extension carries this call. Absent means interactive, which keeps
+   * callers written before the second transport working.
+   */
+  transport?: "interactive" | "subagents" | "none";
+  /** subagents transport. Starts a blocking child without waiting for it. */
+  launchDetached?(args: { id: string; task: string; cwd?: string; model?: string }): DetachedLaunch;
   /** Starts a subagent and returns its session file when known. */
   launch(args: { agent: string; task: string; name: string; cwd?: string; model?: string }): Promise<{ sessionFile?: string }>;
   sendToChild(name: string, message: string): Promise<void>;
@@ -55,6 +69,7 @@ interface Child {
   backend?: SandboxBackend;
   watcher?: InboxWatcher;
   callId?: string;
+  abort?: () => void;
 }
 
 export class ThreadService {
@@ -65,6 +80,10 @@ export class ThreadService {
   constructor(d: ThreadServiceDeps) {
     this.d = d;
     this.now = d.now ?? Date.now;
+  }
+
+  get transportSetting(): InfinityConfig["threads"]["transport"] {
+    return this.d.config.threads.transport;
   }
 
   get identity(): ThreadIdentity {
@@ -95,6 +114,14 @@ export class ThreadService {
     const check = checkChildOf(this.d.identity.stack, p.child_of, this.d.config.threads.maxDepth);
     if (!check.ok) throw new Error(check.message);
     if (p.instructions.trim() === "") throw new Error("instructions must not be empty");
+    const transport = io.transport ?? "interactive";
+    if (transport === "none") throw new Error(NO_TRANSPORT_MESSAGE);
+    if (transport === "subagents" && p.fresh_context !== true) {
+      throw new Error(
+        "This session runs threads on pi-subagents, whose children always start with an empty context and cannot fork yours. " +
+          "Call spawn_thread again with fresh_context: true and instructions that contain everything the child needs.",
+      );
+    }
 
     const id = newThreadId();
     const stack = [...this.d.identity.stack, id];
@@ -120,28 +147,48 @@ export class ThreadService {
       createdAt: this.now(),
       status: "running",
       sandbox,
+      ...(transport === "subagents" ? { transport } : {}),
     };
+    let detached: DetachedLaunch | undefined;
     try {
-      this.d.files.write(record);
       const task = frameTask({
         id,
         stack,
         fresh,
         instructions: p.instructions,
         sandbox: sandbox ? { path: sandbox.path, branch: sandbox.branch } : undefined,
+        transport,
       });
-      const launched = await io.launch({ agent: fresh ? AGENT_FRESH : AGENT_FORK, task, name: id, cwd: sandbox?.path, model: p.model });
-      if (launched.sessionFile) record.sessionFile = launched.sessionFile;
-      this.d.files.write(record);
+      if (transport === "subagents") {
+        if (!io.launchDetached) throw new Error("bug: the subagents transport needs launchDetached");
+        detached = io.launchDetached({ id, task, cwd: sandbox?.path, model: p.model });
+      } else {
+        this.d.files.write(record);
+        const launched = await io.launch({ agent: fresh ? AGENT_FRESH : AGENT_FORK, task, name: id, cwd: sandbox?.path, model: p.model });
+        if (launched.sessionFile) record.sessionFile = launched.sessionFile;
+        this.d.files.write(record);
+      }
     } catch (err) {
       this.d.files.remove(id);
       if (sandbox && backend) await this.cleanupSandbox(backend, sandbox);
       throw err;
     }
 
-    const child: Child = { record, callId: io.callId, backend };
+    const child: Child = { record, callId: io.callId, backend, abort: detached?.abort };
     this.children.set(id, child);
-    if (record.sessionFile) {
+    if (detached) {
+      void detached.done.then(
+        (res) =>
+          this.onClosed(
+            child,
+            { type: "closed", seq: 0, text: res.output, at: this.now() },
+            this.sourceOf(child),
+            res.isError ? "error" : "ok",
+          ),
+        (err: unknown) =>
+          this.onClosed(child, { type: "closed", seq: 0, text: String(err), at: this.now() }, this.sourceOf(child), "error"),
+      );
+    } else if (record.sessionFile) {
       child.watcher = new InboxWatcher({
         file: inboxPath(record.sessionFile),
         logger: this.d.logger,
@@ -153,9 +200,13 @@ export class ThreadService {
       this.d.logger.error("threads.spawn", new Error(`no session file returned for ${id}, reports from it cannot be received`));
     }
     const where = sandbox ? ` Its working directory is the sandbox branch ${sandbox.branch}.` : "";
+    const arrives =
+      transport === "subagents"
+        ? "Its final report arrives as one [infinity event] message"
+        : "Its reports and its close arrive as [infinity event] messages";
     const text =
       `Child thread ${id} (${fresh ? "fresh context" : "inherited context"}) is running.${where} ` +
-      "Its reports and its close arrive as [infinity event] messages. Do not poll. End your turn or work on something independent.";
+      `${arrives}. Do not poll. End your turn or work on something independent.`;
     return { id, text };
   }
 
@@ -208,12 +259,22 @@ export class ThreadService {
     );
   }
 
-  private async onClosed(child: Child, line: InboxLine, source: { tool: string; callId?: string; args: unknown }): Promise<void> {
+  private async onClosed(
+    child: Child,
+    line: InboxLine,
+    source: { tool: string; callId?: string; args: unknown },
+    outcome: "ok" | "error" = "ok",
+  ): Promise<void> {
     const rec = child.record;
     if (rec.status === "closed") return;
     rec.status = "closed";
     child.watcher?.stop();
-    const parts = [`Child thread ${rec.id} has shut down. Report from child thread: ${line.text?.trim() || "(no report)"}`];
+    const text = line.text?.trim() || "(no report)";
+    const parts = [
+      rec.transport === "subagents"
+        ? `Child thread ${rec.id} has finished${outcome === "error" ? " with an error" : ""}. Final report: ${text}`
+        : `Child thread ${rec.id} has shut down. Report from child thread: ${text}`,
+    ];
     if (rec.sandbox && child.backend) {
       try {
         if (this.d.config.sandbox.autoCommit) await child.backend.commitAll(rec.sandbox, `thread ${rec.id}`);
@@ -258,6 +319,11 @@ export class ThreadService {
           .map((r) => r.id)
           .join(", ") || "(none)";
       throw new Error(`${threadId} is not a direct child of ${this.d.identity.id}. Your children: ${known}`);
+    }
+    if (child.record.transport === "subagents") {
+      throw new Error(
+        `Thread ${threadId} runs on pi-subagents, which cannot take messages. Wait for its final report, then spawn a new thread if more work is needed.`,
+      );
     }
     await io.sendToChild(threadId, message);
   }
@@ -341,6 +407,11 @@ export class ThreadService {
     for (const c of this.children.values()) {
       c.watcher?.stop();
       if (c.record.status === "running") {
+        if (c.abort) {
+          // Mark closed first so the settling call does not emit into a session that is ending.
+          c.record.status = "closed";
+          c.abort();
+        }
         try {
           this.d.files.remove(c.record.id);
         } catch (err) {

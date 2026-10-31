@@ -48,6 +48,7 @@ export default function piInfinity(pi: ExtensionAPI): void {
         runtime.logger,
         (m) => runtime?.notify(m, "warning"),
         pi.getAllTools().map((t) => t.name),
+        runtime.config.threads.transport,
       );
     if (statusTimer) clearInterval(statusTimer);
     if (ctx.hasUI) statusTimer = setInterval(() => updateStatus(ctx), 1000);
@@ -133,7 +134,11 @@ export default function piInfinity(pi: ExtensionAPI): void {
           lines.push(
             threads.length === 0
               ? "no threads"
-              : threads.map((t) => `${t.id} ${t.status} ${t.fresh ? "fresh" : "fork"} ${t.sandbox?.branch ?? ""}`).join("\n"),
+              : threads
+                  .map(
+                    (t) => `${t.id} ${t.status} ${t.transport ?? "interactive"} ${t.fresh ? "fresh" : "fork"} ${t.sandbox?.branch ?? ""}`,
+                  )
+                  .join("\n"),
           );
       }
       if (sub === "sandboxes" && r.threads) lines.push(await r.threads.listSandboxes(ctx.cwd));

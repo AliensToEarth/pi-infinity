@@ -1,5 +1,8 @@
 import { Type } from "typebox";
+import { fileURLToPath } from "node:url";
+import { loadBlockingPrompt, launchViaSubagents } from "../lib/subagents-launch.ts";
 import type { ThreadIO, ThreadService } from "../lib/thread-service.ts";
+import { pickTransport, readAgentRegistry, type TransportSetting } from "../lib/transport.ts";
 import { tool, type ToolDef } from "./types.ts";
 
 type ExecuteTool = (
@@ -12,7 +15,11 @@ interface ToolCtx {
   hasUI: boolean;
   ui: { confirm(title: string, message: string): Promise<boolean> };
   executeTool: ExecuteTool;
+  tools?: ReadonlyArray<{ name: string }>;
+  model?: { provider?: string; id?: string };
 }
+
+const BLOCKING_PROMPT_FILE = fileURLToPath(new URL("../../agents/blocking/thread-blocking.md", import.meta.url));
 
 function textOf(result: { content: Array<{ type: string; text?: string }> }): string {
   return result.content
@@ -21,13 +28,35 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
     .trim();
 }
 
-function ioFor(ctx: ToolCtx, callId?: string): ThreadIO {
+function ioFor(ctx: ToolCtx, setting: TransportSetting, callId?: string): ThreadIO {
   const run = async (name: string, args: unknown) => {
     const outcome = await ctx.executeTool(name, args);
     if (outcome.isError) throw new Error(`${name} failed: ${textOf(outcome.result)}`);
     return outcome.result;
   };
+  const registry = readAgentRegistry();
+  const transport = pickTransport(
+    setting,
+    (ctx.tools ?? []).map((t) => t.name),
+    registry !== undefined,
+  );
+  const sessionModel = ctx.model?.provider && ctx.model.id ? `${ctx.model.provider}/${ctx.model.id}` : undefined;
   return {
+    transport,
+    launchDetached: (a) => {
+      if (!registry) throw new Error("bug: pi-subagents registry missing for the subagents transport");
+      return launchViaSubagents({
+        registry,
+        executeTool: ctx.executeTool,
+        id: a.id,
+        task: a.task,
+        cwd: a.cwd,
+        model: a.model,
+        sessionModel,
+        systemPrompt: loadBlockingPrompt(BLOCKING_PROMPT_FILE),
+        promptFile: BLOCKING_PROMPT_FILE,
+      });
+    },
     cwd: ctx.cwd,
     callId,
     launch: async (a) => {
@@ -69,7 +98,7 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
       sandbox: Type.Optional(Type.Boolean({ description: "Give the child an isolated git worktree. Needs a git repo" })),
     }),
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-      const out = await svc().spawn(params, ioFor(ctx as unknown as ToolCtx, toolCallId));
+      const out = await svc().spawn(params, ioFor(ctx as unknown as ToolCtx, svc().transportSetting, toolCallId));
       return { content: [{ type: "text", text: out.text }], details: { id: out.id } };
     },
   });
@@ -81,7 +110,7 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
       "Send a message to one of your direct child threads. It is typed into the running child, or resumes the child if it has finished. Returns at once.",
     parameters: Type.Object({ thread_id: Type.String(), message: Type.String() }),
     async execute(toolCallId, params, _s, _u, ctx) {
-      await svc().sendToChild(params.thread_id, params.message, ioFor(ctx as unknown as ToolCtx, toolCallId));
+      await svc().sendToChild(params.thread_id, params.message, ioFor(ctx as unknown as ToolCtx, svc().transportSetting, toolCallId));
       return { content: [{ type: "text", text: `Message sent to ${params.thread_id}.` }], details: {} };
     },
   });
@@ -96,7 +125,11 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
       commit: Type.Optional(Type.Boolean({ description: "Commit the result (sandboxed callers only, default true)" })),
     }),
     async execute(toolCallId, params, _s, _u, ctx) {
-      const text = await svc().squash(params.thread_id, { commit: params.commit }, ioFor(ctx as unknown as ToolCtx, toolCallId));
+      const text = await svc().squash(
+        params.thread_id,
+        { commit: params.commit },
+        ioFor(ctx as unknown as ToolCtx, svc().transportSetting, toolCallId),
+      );
       return { content: [{ type: "text", text }], details: {} };
     },
   });
