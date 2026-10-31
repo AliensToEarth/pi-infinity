@@ -456,6 +456,9 @@ Product backlog, in priority order. Points are relative (1 small, 3 large).
 | B-5 | Close and commit a thread that ends without close_thread | 1 | 7 |
 | B-6 | Refuse prune while applied sandbox work is uncommitted | 1 | 7 |
 | P-1 | Polish: prettier, CI, AGENTS.md, real pi dependencies, README | 2 | 7 |
+| X-1 | Second thread transport on pi-subagents (section 11) | 5 | 8 to 10 |
+| B-7 | Fork emulation on pi-subagents (bounded conversation excerpt) | 2 | backlog |
+| B-8 | Live progress of the nested call in the status line | 1 | backlog |
 
 Sprints:
 
@@ -620,3 +623,27 @@ R-X12. README documents what each transport supports.
 Risks: `ctx.executeTool` may not work after the spawning call returned (mitigation: smoke
 test first, fall back to running the child process ourselves if it fails); the
 `__pi_subagents` registry could change upstream (mitigation: feature-detect, one warning).
+
+Sprints 8 to 10, second transport
+
+* The launch moved behind `ThreadIO.transport`, absent meaning interactive. The 123 tests
+  that existed before this work pass unmodified (R-X2). 22 tests were added: transport choice,
+  launcher, service behavior on the subagents transport, adapter level.
+* Direct testing with real pi 1.4.0 and the real pi-subagents source in an isolated agent
+  directory (no other subagent extension, a real model):
+  * a sandboxed fresh thread ran detached, the parent kept working, `child_closed` carried the
+    final report, `squash_sandbox` staged the file after confirmation (R-X3, R-X6)
+  * two parallel threads, one slow, closed independently and in finish order (R-X10)
+  * a fork request was rejected with the guidance text (R-X5)
+  * quitting pi killed a running child and its `sleep`, left the sandbox branch and the
+    partial file in place (R-X8)
+  * the same scenario on pi-interactive-subagents with the new code still passes
+* `scripts/smoke.sh subagents|interactive` automates the sandbox scenario for both transports
+  and is exposed as `npm run smoke:*`. It is opt in because it needs a model.
+* Finding: `ctx.executeTool` keeps working after the spawning tool call returned, as long as
+  the nested call carries its own `AbortController`. No fallback runner was needed.
+* Finding: pi-subagents drops tools it does not know, so children there cannot get
+  pi-infinity tools. Reports and nesting are therefore not available on that transport. This is
+  documented in the README matrix instead of worked around.
+* Backlog: B-7 fork emulation on pi-subagents by passing a bounded excerpt of the parent
+  conversation, B-8 surface the live progress of the nested call in the status line.

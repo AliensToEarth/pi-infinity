@@ -34,8 +34,9 @@ Infinity, a Rust runtime for large numbers of concurrent agents, solves the same
 small set of rules. An agent step never blocks on anything external. Slow work is dispatched
 and the agent yields. Whatever the agent was waiting for later shows up as a message. Child
 threads exist mainly to keep the parent's context clean. pi-infinity carries those rules over
-to pi. It builds on [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents)
-for the thread transport instead of replacing it. The full research and the reasoning behind
+to pi. Threads run on top of one of two subagent extensions,
+[pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents) or
+[pi-subagents](https://github.com/amosblomqvist/pi-subagents), instead of replacing them. The full research and the reasoning behind
 each feature are in [`SPEC.md`](SPEC.md).
 
 ## How it works
@@ -122,7 +123,7 @@ At no point did the model sit in a blocked tool call, run a polling loop, or rea
 
 * pi 1.4 or newer
 * Node 24 or newer (the tests run TypeScript directly)
-* For threads: pi-interactive-subagents and tmux. Jobs, timers and the guards work without them.
+* For threads: pi-interactive-subagents (needs tmux) or pi-subagents. Jobs, timers and the guards work without either.
 * For sandboxes: git, or [jj](https://jj-vcs.dev)
 
 ## Install
@@ -190,7 +191,7 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
 * **Fresh or forked context.** `fresh_context: true` starts the child with an empty history
   (agent `thread-fresh`), which suits independent work and long parent conversations. The
   instructions must then be self-contained. Without it the child forks your conversation
-  (agent `thread-fork`).
+  (agent `thread-fork`), on pi-interactive-subagents only.
 * **Stack check.** `child_of` must be the caller's real thread stack, root first. A forked
   child inherits its parent's plans, including pending `spawn_thread` calls. The check rejects
   those so the child does not run them again.
@@ -204,7 +205,25 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
   session the changes are only staged (git) or left in the working-copy change (jj), and you
   confirm first. Inside a sandboxed thread the result is committed. A conflict aborts the
   squash and leaves both sides unchanged.
-* **Depth.** Threads can spawn threads, down to four levels.
+* **Depth.** On pi-interactive-subagents threads can spawn threads, down to four levels.
+
+### Two transports
+
+pi-infinity picks the transport from the tools that are installed. `threads.transport` in
+`infinity.json` overrides it with `interactive` or `subagents`. If both extensions are loaded,
+`auto` chooses pi-interactive-subagents.
+
+| Feature | pi-interactive-subagents | pi-subagents |
+|---------|--------------------------|--------------|
+| Child runs in | A tmux pane you can watch and type into | A headless child process |
+| `spawn_thread` returns | At once | At once (the blocking call runs detached) |
+| Context | Fresh or forked | Fresh only, `fresh_context: true` is required |
+| Reports while running | Yes, `report_to_parent` | No |
+| Final result | `close_thread` report, or the exit if it was skipped | The child's last message |
+| `send_message_to_child`, resume | Yes | No, spawn a new thread |
+| Nested threads | Yes, up to depth 4 | No, children have built-in tools only |
+| Sandboxes, squash, prune | Yes | Yes |
+| Session ends | The pane keeps running until it finishes | Running children are killed, sandboxes stay |
 
 Your main session is never moved into a sandbox. It is your own working directory.
 
@@ -227,24 +246,29 @@ in `extensions/lib/config.ts` and the shape is documented in section 3.2 of `SPE
 or invalid keys are reported once and ignored.
 
 ```json
-{ "bash": { "guard": "warn" }, "sandbox": { "backend": "git" } }
+{ "bash": { "guard": "warn" }, "sandbox": { "backend": "git" }, "threads": { "transport": "auto" } }
 ```
 
 `bash.guard` is `block`, `warn` or `off`. `sandbox.backend` is `auto`, `git` or `jj`.
+`threads.transport` is `auto`, `interactive` or `subagents`.
 
 ## Limits
 
 * Running jobs end with the session. They are not resumed after a restart. Timers are.
-* Threads need tmux and pi-interactive-subagents.
-* A closing child wakes the parent twice, once for the close event and once for the subagents
-  extension's own exit message, which pi-infinity shortens to one line but cannot suppress.
+* Threads need pi-interactive-subagents (and tmux) or pi-subagents. On pi-subagents there are
+  no live reports, no messaging and no forked context, see the transport table.
+* On pi-interactive-subagents a closing child wakes the parent twice, once for the close event
+  and once for the extension's own exit message, which pi-infinity shortens to one line but
+  cannot suppress.
 * The bash guard is pattern based and can block something harmless. Set `bash.guard` to `warn`.
 * Provider retries and context compaction stay with pi itself.
 
 ## Troubleshooting
 
-* `spawn_thread` says the subagent tools are missing: install pi-interactive-subagents and
-  start pi inside tmux.
+* `spawn_thread` says it needs a subagent extension: install pi-interactive-subagents (and run
+  pi inside tmux) or pi-subagents, then check `threads.transport`.
+* `spawn_thread` asks for `fresh_context: true`: your session runs on pi-subagents, whose
+  children cannot fork the conversation.
 * A thread starts without pi-infinity tools: run `./scripts/install.sh` again, it relinks the
   two agent definitions.
 * The guard blocks something harmless: set `bash.guard` to `warn`.
@@ -253,8 +277,10 @@ or invalid keys are reported once and ignored.
 ## Development
 
 ```
-./check.bash       # format, typecheck, tests
-npm run fmt        # fix formatting
+./check.bash                 # format, typecheck, tests
+npm run fmt                  # fix formatting
+npm run smoke:subagents      # real pi and a real model, thread on pi-subagents (costs a few cents)
+npm run smoke:interactive    # same, on pi-interactive-subagents
 ```
 
 Read [`AGENTS.md`](AGENTS.md) first. The layout is in section 3 of `SPEC.md`.

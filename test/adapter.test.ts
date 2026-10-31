@@ -281,13 +281,11 @@ test("R-X1 R-X2 with both subagent tools present the interactive path is used un
 test("R-X1 spawn_thread without any subagent tool says what to install", async () => {
   const s = await started();
   await assert.rejects(
-    s.tools
-      .get("spawn_thread")
-      .execute("c", { instructions: "x", child_of: ["root"], fresh_context: true }, undefined, undefined, {
-        ...s.ctx,
-        tools: [],
-        executeTool: async () => assert.fail("no"),
-      }),
+    s.tools.get("spawn_thread").execute("c", { instructions: "x", child_of: ["root"], fresh_context: true }, undefined, undefined, {
+      ...s.ctx,
+      tools: [],
+      executeTool: async () => assert.fail("no"),
+    }),
     /Install pi-interactive-subagents .* or pi-subagents/,
   );
 });
