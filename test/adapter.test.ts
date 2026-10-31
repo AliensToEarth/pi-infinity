@@ -1,0 +1,195 @@
+import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { test } from "node:test";
+import piInfinity from "../extensions/index.ts";
+
+type Handler = (event: any, ctx: any) => any;
+
+function fakePi() {
+  const tools = new Map<string, any>();
+  const handlers = new Map<string, Handler[]>();
+  const commands = new Map<string, any>();
+  const renderers = new Map<string, unknown>();
+  const sent: any[] = [];
+  const entries: Array<[string, unknown]> = [];
+  const pi = {
+    registerTool: (t: any) => void tools.set(t.name, t),
+    on: (name: string, h: Handler) => void handlers.set(name, [...(handlers.get(name) ?? []), h]),
+    registerCommand: (name: string, c: any) => void commands.set(name, c),
+    registerMessageRenderer: (name: string, r: unknown) => void renderers.set(name, r),
+    sendMessage: (m: any, o: any) => void sent.push({ m, o }),
+    appendEntry: (type: string, data: unknown) => void entries.push([type, data]),
+    getAllTools: () => [...tools.keys()].map((name) => ({ name })),
+  };
+  const emit = async (name: string, event: unknown, ctx: unknown) => {
+    let last: unknown;
+    for (const h of handlers.get(name) ?? []) last = (await h(event, ctx)) ?? last;
+    return last;
+  };
+  return { pi, tools, commands, renderers, sent, entries, emit };
+}
+
+function fakeCtx(cwd = tmpdir()) {
+  return {
+    cwd,
+    hasUI: false,
+    ui: { notify: () => {}, setStatus: () => {} },
+    sessionManager: { getSessionFile: () => undefined, getSessionDir: () => cwd, getSessionId: () => "s1", getBranch: () => [] },
+  };
+}
+
+async function started() {
+  const f = fakePi();
+  piInfinity(f.pi as never);
+  const ctx = fakeCtx(mkdtempSync(join(tmpdir(), "pi-inf-ad-")));
+  await f.emit("session_start", { type: "session_start" }, ctx);
+  return { ...f, ctx };
+}
+
+async function until(cond: () => boolean, ms = 4000): Promise<void> {
+  const t0 = Date.now();
+  while (!cond()) {
+    if (Date.now() - t0 > ms) throw new Error("timed out");
+    await new Promise((r) => setTimeout(r, 10));
+  }
+}
+
+const EXPECTED_ROOT_TOOLS = [
+  "bg_run",
+  "bg_output",
+  "bg_cancel",
+  "bg_list",
+  "sleep",
+  "sleep_until",
+  "sleep_until_event",
+  "timer_cancel",
+  "spawn_thread",
+  "send_message_to_child",
+  "squash_sandbox",
+];
+
+test("registers the documented tool set in a root session", async () => {
+  const s = await started();
+  assert.deepEqual([...s.tools.keys()].sort(), [...EXPECTED_ROOT_TOOLS].sort());
+  assert.ok(s.renderers.has("infinity-event"));
+  assert.ok(s.commands.has("infinity"));
+});
+
+test("R-G2 tool descriptions are short and carry the key guidance", async () => {
+  const s = await started();
+  for (const [name, t] of s.tools) assert.ok(t.description.length < 900, `${name} description is ${t.description.length} chars`);
+  assert.match(s.tools.get("bg_run").description, /Never poll/);
+  assert.match(s.tools.get("bg_run").description, /\[infinity event\]/);
+  assert.match(s.tools.get("sleep").description, /ends your turn/);
+  assert.match(s.tools.get("spawn_thread").description, /child_of/);
+  assert.match(s.tools.get("spawn_thread").description, /fresh_context/);
+});
+
+test("R-B1 R-B4 bash guard blocks long sleeps and sets a default timeout", async () => {
+  const s = await started();
+  const blocked = await s.emit("tool_call", { toolName: "bash", input: { command: "sleep 60" } }, s.ctx);
+  assert.equal((blocked as { block: boolean }).block, true);
+  assert.match((blocked as { reason: string }).reason, /bg_run/);
+  const ev = { toolName: "bash", input: { command: "ls" } as { command: string; timeout?: number } };
+  assert.equal(await s.emit("tool_call", ev, s.ctx), undefined);
+  assert.equal(ev.input.timeout, 180);
+  const own = { toolName: "bash", input: { command: "ls", timeout: 5 } };
+  await s.emit("tool_call", own, s.ctx);
+  assert.equal(own.input.timeout, 5);
+});
+
+test("R-O1 oversized results are replaced, read is exempt", async () => {
+  const s = await started();
+  const big = { type: "text", text: "z".repeat(50000) };
+  const res = (await s.emit("tool_result", { toolName: "web_fetch", content: [big], isError: false }, s.ctx)) as {
+    content: Array<{ text: string }>;
+  };
+  assert.ok(res.content[0].text.length < 10000);
+  assert.equal(await s.emit("tool_result", { toolName: "read", content: [big], isError: false }, s.ctx), undefined);
+});
+
+test("R-J1 R-J4 bg_run returns at once and the exit arrives as a steer event", async () => {
+  const s = await started();
+  const t0 = Date.now();
+  const out = await s.tools.get("bg_run").execute("call-1", { command: "echo hi; exit 2" }, undefined, undefined, s.ctx);
+  assert.ok(Date.now() - t0 < 300);
+  assert.match(out.content[0].text, /Job j1 started/);
+  await until(() => s.sent.length > 0);
+  const { m, o } = s.sent[0];
+  assert.equal(m.customType, "infinity-event");
+  assert.match(m.content, /exit code 2/);
+  assert.match(m.content, /call-1/);
+  assert.deepEqual(o, { triggerTurn: true, deliverAs: "steer" });
+});
+
+test("R-J8 bg_cancel on an unknown id is an error result", async () => {
+  const s = await started();
+  await assert.rejects(s.tools.get("bg_cancel").execute("c", { id: "j9" }, undefined, undefined, s.ctx), /unknown job id/);
+});
+
+test("R-T1 R-T4 sleep ends the turn, persists the timer and fires an event", async () => {
+  const s = await started();
+  const out = await s.tools.get("sleep").execute("c", { seconds: 1, note: "check build" }, undefined, undefined, s.ctx);
+  assert.equal(out.terminate, true);
+  assert.equal(s.entries[0][0], "infinity-timer");
+  assert.equal((s.entries[0][1] as { op: string }).op, "set");
+  await until(() => s.sent.length > 0, 3000);
+  assert.match(s.sent[0].m.content, /timer .* fired.*check build/);
+  assert.equal((s.entries.at(-1)?.[1] as { op: string }).op, "fired");
+});
+
+test("R-T1 sleep_until_event registers nothing and terminates", async () => {
+  const s = await started();
+  const out = await s.tools.get("sleep_until_event").execute("c", { note: "the build" }, undefined, undefined, s.ctx);
+  assert.equal(out.terminate, true);
+  assert.equal(s.entries.length, 0);
+});
+
+test("R-T6 sleep_until reports bad input as an error", async () => {
+  const s = await started();
+  await assert.rejects(
+    s.tools.get("sleep_until").execute("c", { date: "2026-02-30", time: "10:00", timezone: "UTC" }, undefined, undefined, s.ctx),
+  );
+  await assert.rejects(
+    s.tools.get("sleep_until").execute("c", { date: "2026-03-01", time: "10:00", timezone: "Nowhere/Land" }, undefined, undefined, s.ctx),
+  );
+});
+
+test("R-H1 spawn_thread through the adapter rejects a wrong stack", async () => {
+  const s = await started();
+  await assert.rejects(
+    s.tools.get("spawn_thread").execute("c", { instructions: "x", child_of: ["t-123456"] }, undefined, undefined, {
+      ...s.ctx,
+      executeTool: async () => assert.fail("must not launch"),
+    }),
+    /do not spawn the parent's threads/,
+  );
+});
+
+test("R-J9 session shutdown cancels running jobs", async () => {
+  const s = await started();
+  await s.tools.get("bg_run").execute("c", { command: "sleep 30" }, undefined, undefined, s.ctx);
+  await s.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, s.ctx);
+  await until(() => s.sent.length > 0);
+  assert.match(s.sent[0].m.content, /cancelled/);
+});
+
+test("B-4 B-5 subagent exit messages are shortened once the thread closed and ignored otherwise", async () => {
+  const s = await started();
+  const exit = (name: string) => ({
+    message: { role: "custom", customType: "subagent_result", content: "long summary", details: { name } },
+  });
+  assert.equal(await s.emit("message_end", exit("t-123456"), s.ctx), undefined);
+  assert.equal(await s.emit("message_end", { message: { role: "assistant", content: [] } }, s.ctx), undefined);
+});
+
+test("README tool tables and registered tools agree", async () => {
+  const s = await started();
+  const readme = readFileSync(join(import.meta.dirname, "..", "README.md"), "utf8");
+  const documented = new Set([...readme.matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]));
+  const registered = new Set([...s.tools.keys(), "report_to_parent", "close_thread"]);
+  assert.deepEqual([...registered].filter((n) => !documented.has(n)).sort(), [], "registered but undocumented");
+  assert.deepEqual([...documented].filter((n) => !registered.has(n)).sort(), [], "documented but not registered");
+});
