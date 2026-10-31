@@ -193,3 +193,101 @@ test("README tool tables and registered tools agree", async () => {
   assert.deepEqual([...registered].filter((n) => !documented.has(n)).sort(), [], "registered but undocumented");
   assert.deepEqual([...documented].filter((n) => !registered.has(n)).sort(), [], "documented but not registered");
 });
+
+function withRegistry<T>(fn: (calls: string[]) => Promise<T>): Promise<T> {
+  const g = globalThis as { __pi_subagents?: unknown };
+  const before = g.__pi_subagents;
+  const calls: string[] = [];
+  g.__pi_subagents = {
+    registerAgent: (c: { name: string }) => calls.push(`register ${c.name}`),
+    unregisterAgent: (n: string) => calls.push(`unregister ${n}`),
+  };
+  return fn(calls).finally(() => {
+    g.__pi_subagents = before;
+  });
+}
+
+test("R-X1 R-X3 R-X6 spawn_thread on pi-subagents returns at once and delivers the final report later", () =>
+  withRegistry(async (calls) => {
+    const s = await started();
+    let finish: (v: unknown) => void = () => {};
+    const executed: Array<{ name: string; args: any; signal?: AbortSignal }> = [];
+    const ctx = {
+      ...s.ctx,
+      tools: [{ name: "subagent" }],
+      model: { provider: "openrouter", id: "z-ai/glm-5.3" },
+      executeTool: (name: string, args: unknown, options?: { signal?: AbortSignal }) => {
+        executed.push({ name, args, signal: options?.signal });
+        return new Promise((resolve) => (finish = resolve));
+      },
+    };
+    const t0 = Date.now();
+    const out = await s.tools
+      .get("spawn_thread")
+      .execute("c1", { instructions: "list files", child_of: ["root"], fresh_context: true }, undefined, undefined, ctx);
+    assert.ok(Date.now() - t0 < 500);
+    assert.match(out.content[0].text, /final report arrives as one \[infinity event\]/);
+    assert.equal(executed.length, 1);
+    assert.equal(executed[0].name, "subagent");
+    assert.deepEqual(Object.keys(executed[0].args).sort(), ["agent", "task"]);
+    assert.match(executed[0].args.agent, /^thread-t-[0-9a-f]{6}$/);
+    assert.match(executed[0].args.task, /list files/);
+    assert.ok(executed[0].signal && !executed[0].signal.aborted);
+    assert.deepEqual(calls, [`register ${executed[0].args.agent}`]);
+    assert.equal(s.sent.length, 0);
+    finish({ isError: false, result: { content: [{ type: "text", text: "found 3 files" }] } });
+    await until(() => s.sent.length === 1);
+    assert.match(s.sent[0].m.content, /Final report: found 3 files/);
+    assert.deepEqual(s.sent[0].o, { triggerTurn: true, deliverAs: "steer" });
+    assert.deepEqual(calls.at(-1), `unregister ${executed[0].args.agent}`);
+  }));
+
+test("R-X5 spawn_thread on pi-subagents rejects a fork request", () =>
+  withRegistry(async () => {
+    const s = await started();
+    const ctx = { ...s.ctx, tools: [{ name: "subagent" }], executeTool: async () => assert.fail("must not launch") };
+    await assert.rejects(
+      s.tools.get("spawn_thread").execute("c", { instructions: "x", child_of: ["root"] }, undefined, undefined, ctx),
+      /fresh_context: true/,
+    );
+  }));
+
+test("R-X1 R-X2 with both subagent tools present the interactive path is used unchanged", () =>
+  withRegistry(async (calls) => {
+    const s = await started();
+    const executed: Array<{ name: string; args: any }> = [];
+    const ctx = {
+      ...s.ctx,
+      tools: [{ name: "subagent" }, { name: "subagent_message" }],
+      executeTool: async (name: string, args: unknown) => {
+        executed.push({ name, args });
+        return {
+          isError: false,
+          result: { content: [{ type: "text", text: "started" }], details: { sessionFile: join(tmpdir(), "x-session.jsonl") } },
+        };
+      },
+    };
+    const out = await s.tools
+      .get("spawn_thread")
+      .execute("c", { instructions: "x", child_of: ["root"], fresh_context: true }, undefined, undefined, ctx);
+    assert.match(out.content[0].text, /reports and its close arrive/);
+    assert.equal(executed[0].name, "subagent");
+    assert.equal(executed[0].args.agent, "thread-fresh");
+    assert.match(executed[0].args.name, /^t-[0-9a-f]{6}$/);
+    assert.deepEqual(calls, [], "the pi-subagents registry is untouched");
+    await s.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, s.ctx);
+  }));
+
+test("R-X1 spawn_thread without any subagent tool says what to install", async () => {
+  const s = await started();
+  await assert.rejects(
+    s.tools
+      .get("spawn_thread")
+      .execute("c", { instructions: "x", child_of: ["root"], fresh_context: true }, undefined, undefined, {
+        ...s.ctx,
+        tools: [],
+        executeTool: async () => assert.fail("no"),
+      }),
+    /Install pi-interactive-subagents .* or pi-subagents/,
+  );
+});

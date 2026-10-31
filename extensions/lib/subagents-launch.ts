@@ -57,7 +57,8 @@ export function launchViaSubagents(i: LaunchInput): DetachedLaunch {
     .executeTool("subagent", args, { signal: controller.signal })
     .then((outcome) => ({
       output: outcome.result.content
-        .map((p) => (p.type === "text" ? (p.text ?? "") : ""))
+        .filter((p) => p.type === "text")
+        .map((p) => p.text ?? "")
         .join("\n")
         .trim(),
       isError: outcome.isError,
