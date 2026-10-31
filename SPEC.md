@@ -539,3 +539,84 @@ Sprint 7, jj and polish
 * The tool list lost the unused `name` parameter of `spawn_thread`.
 * The gate gained formatting, pi packages became real dev dependencies, CI and `AGENTS.md`
   were added, the README was rewritten.
+
+## 11. Second thread transport: pi-subagents
+
+Added after v1. Goal: `spawn_thread` also works on top of
+[amosblomqvist/pi-subagents](https://github.com/amosblomqvist/pi-subagents), without changing
+anything for users of pi-interactive-subagents.
+
+### 11.1 Research
+
+Read from the source of pi-subagents (index.ts, 932 lines):
+
+| Aspect | pi-interactive-subagents | pi-subagents |
+|--------|--------------------------|--------------|
+| Tool surface | `subagent`, `subagent_message`, `subagents_list` | `subagent` only |
+| `subagent` params | agent, task, name, model, cwd | agent, task, cwd |
+| Call semantics | returns at once, result steered later | blocks until the child ends, returns its last assistant text |
+| Child process | tmux pane, session file, resumable | headless `pi --mode json -p --no-session --no-extensions` |
+| Context | per agent definition (fork or fresh) | always fresh, task text only |
+| Agent registry | markdown files, discovery | `globalThis.__pi_subagents.registerAgent(config)` at runtime |
+| Tools in child | whitelist plus `registerToolExtension(name, path)` | whitelist, but only tools in a hard-coded map are kept, others are silently dropped |
+| Concurrency | none | semaphore, default 4, extra calls wait |
+| Cancel | pane close | the tool signal sends SIGTERM then SIGKILL to the child process |
+
+Consequences:
+
+* Our child-side tools (`report_to_parent`, `close_thread`, `bg_*`) cannot reach a
+  pi-subagents child, there is no hook to map them. The child gets built-in tools only.
+* There is no live channel from child to parent. The only message is the final output.
+* Forking the parent conversation is impossible. Children are always fresh.
+* The call blocks, so `spawn_thread` must run it detached to keep returning at once. The
+  nested call has to use its own `AbortController`, because the signal of the spawning tool
+  call ends with that call.
+* Registering an agent per thread (`thread-<id>`) avoids races between parallel spawns with
+  different models, and lets us pass the model, which the tool schema does not accept.
+
+### 11.2 Requirements
+
+R-X1. `threads.transport` is `auto` (default), `interactive` or `subagents`. Auto picks
+      interactive when a `subagent_message` tool exists, otherwise subagents when a
+      `subagent` tool and `globalThis.__pi_subagents.registerAgent` exist, otherwise no
+      transport (one warning, `spawn_thread` explains itself when called).
+R-X2. Nothing changes on the interactive path. All tests that existed before this section
+      pass unmodified.
+R-X3. On the subagents transport `spawn_thread` returns at once. The nested `subagent` call is
+      started without awaiting it and carries its own `AbortController`.
+R-X4. Per thread, an agent named `thread-<id>` is registered just before the call and
+      unregistered when the call settles. Its model is the `model` parameter, else the current
+      session model. Its tools are the built-ins. Its system prompt is
+      `agents/blocking/thread-blocking.md`.
+R-X5. `fresh_context` other than `true` is rejected before any side effect, with a message
+      that names the reason and says to pass `fresh_context: true` with self-contained
+      instructions.
+R-X6. When the nested call settles, the thread closes: `child_closed` carries the final output
+      (an error output is labeled as an error). A sandbox is committed and its diff stat is
+      listed, exactly as on the interactive path.
+R-X7. `send_message_to_child` fails with a clear message on this transport. Child tools are
+      not offered, so `report_to_parent` and `close_thread` do not exist for these children.
+      Thread depth is 1.
+R-X8. Session end aborts running subagents-transport threads. Their sandboxes stay intact.
+R-X9. The task frame for this transport says: you have built-in tools only, your last message
+      is the final report, there is no `close_thread`.
+R-X10. If the nested call is queued by the pi-subagents semaphore, the thread simply stays
+       running. No extra handling.
+R-X11. `/infinity threads` shows the transport of each thread.
+R-X12. README documents what each transport supports.
+
+### 11.3 Plan
+
+* Sprint 8, abstraction. Move launch details behind a transport field of `ThreadIO`, keep
+  behavior identical. Exit: the full pre-existing suite passes unmodified.
+* Sprint 9, subagents transport. Spawn, detach, close, abort, rejection rules. Exit: contract
+  tests against a fake that implements the documented pi-subagents surface (blocking
+  `subagent`, `registerAgent`, schema with only agent, task, cwd).
+* Sprint 10, direct testing. Real pi 1.4 in tmux with pi-subagents installed and
+  pi-interactive-subagents absent (isolated agent directory), a real model, a sandboxed
+  thread. Exit: thread spawns, the parent keeps working, the close event arrives, a squash
+  works. Then docs and retrospective.
+
+Risks: `ctx.executeTool` may not work after the spawning call returned (mitigation: smoke
+test first, fall back to running the child process ourselves if it fails); the
+`__pi_subagents` registry could change upstream (mitigation: feature-detect, one warning).
