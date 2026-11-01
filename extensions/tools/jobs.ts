@@ -32,7 +32,7 @@ export function jobTools(rt: () => Runtime): ToolDef[] {
       isolate: Type.Optional(
         Type.Boolean({
           description:
-            "macOS only: restrict writes to explicit cwd. Not a security boundary; reads and network remain allowed. Default false; fails closed if unsupported.",
+            "macOS/Linux: restrict writes to explicit cwd. Linux requires bubblewrap and user namespaces. Not a security boundary; reads and network remain allowed. Default false; fails closed if unsupported.",
         }),
       ),
     }),

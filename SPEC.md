@@ -280,13 +280,17 @@ R-J10. At most `jobs.max` jobs run at once. Further `bg_run` calls fail with a m
 R-J11. A user interrupt (escape) does not cancel jobs. Background work is the point.
 R-J12. The `bg_run` description tells the model not to poll, not to sleep, and to end its turn
        or do independent work after dispatch.
-R-J13. Opt-in `isolate: true` runs the job under macOS `/usr/bin/sandbox-exec`, denying
-       filesystem writes outside the canonical working directory, which must be explicitly supplied.
-       The default remains unrestricted. Symlinks do not grant writes outside that directory.
-       Unsupported platforms, unavailable sandbox-exec, invalid working directories and profile
-       setup failures must not run the command unrestricted. Network and reads remain allowed.
-       This is accidental-write reduction, not a security guarantee: the working directory may
-       contain sensitive files, other processes can still be contacted, and sandbox-exec is deprecated.
+R-J13. Opt-in `isolate: true` denies filesystem writes outside the canonical working directory,
+       which must be explicitly supplied. On macOS it uses `/usr/bin/sandbox-exec`; on Linux it
+       uses `bwrap` (bubblewrap) from PATH, a read-only root bind mount and a writable cwd bind.
+       Linux inherits network access and requires working user and mount namespaces; if bubblewrap
+       or namespace setup is unavailable the job fails without running the command, never falling
+       back to an unrestricted shell. The default remains unrestricted.
+       Symlinks do not grant writes outside the directory. Unsupported platforms, invalid working
+       directories and sandbox setup failures must not run the command unrestricted. Network and
+       reads remain allowed. This is accidental-write reduction, not a security guarantee: cwd may
+       contain sensitive files, other processes can still be contacted, Linux special files and
+       existing services can have side effects, and sandbox-exec is deprecated.
 
 ### 5.2 Bash guard (P1)
 

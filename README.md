@@ -140,7 +140,7 @@ npm install
 
 | Tool | Purpose |
 |------|---------|
-| `bg_run` | Start a shell command in the background and return at once. The exit arrives as an event. Optional `watch` regexes and macOS write isolation. |
+| `bg_run` | Start a shell command in the background and return at once. The exit arrives as an event. Optional `watch` regexes and write isolation. |
 | `bg_output` | Read a job's output without waiting, as a tail or a byte range. |
 | `bg_cancel` | Cancel one job or all. SIGTERM, then SIGKILL after 3 s. Safe to repeat. |
 | `bg_list` | List jobs. |
@@ -186,19 +186,19 @@ so the saved file can be read in pieces without being spilled again.
 
 ### Optional background process isolation
 
-`bg_run({command: "npm test", cwd: "/path/to/project", isolate: true})` uses macOS
-`/usr/bin/sandbox-exec` to deny filesystem writes outside the canonical `cwd`. Isolation
-is off by default and requires an explicit `cwd`. Unsupported platforms and missing
-`sandbox-exec` fail closed; a sandbox initialization failure exits the job without running
-its command. Symlinks are resolved by the OS: a link inside the directory does not grant
-writes to a target outside it. Logs are written by pi outside the sandbox.
+`bg_run({command: "npm test", cwd: "/path/to/project", isolate: true})` limits filesystem
+writes to the canonical `cwd`. It uses `/usr/bin/sandbox-exec` on macOS and `bwrap`
+(bubblewrap) on Linux. Isolation is off by default and requires an explicit `cwd`.
+Unsupported platforms or a missing isolation tool fail closed; if initialization fails,
+the job exits without running its command. Linux also requires working user namespaces,
+which may be disabled by system policy. Logs are written by pi outside the sandbox.
 
 This reduces accidental writes, not a security guarantee. Reads and network access remain
 allowed, other processes may be contacted, and all files within `cwd` remain writable.
-Hard links within `cwd` can refer to the same data as files outside it. Choose a narrow
-directory; `/` provides no useful write restriction. Some tools require
-writes to caches or temporary directories outside `cwd` and may fail. macOS
-`sandbox-exec` is deprecated and may disappear or change in future releases. Git worktrees
+Hard links inside `cwd` can refer to the same data as files outside it; writable nested
+mounts and cooperating processes can also affect other locations. Choose a narrow directory;
+`/` provides no useful write restriction. Tools that write caches or temporary files outside
+`cwd` may fail. macOS `sandbox-exec` is deprecated and may change or disappear. Git worktrees
 and jj workspaces are separate checkout isolation, not process security boundaries.
 
 ## Threads and sandboxes
