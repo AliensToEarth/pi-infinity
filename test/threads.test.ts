@@ -258,6 +258,16 @@ test("R-H7 closed threads reject messaging instead of silently losing the messag
   h.svc.dispose();
 });
 
+test("R-H7 messages are rejected while a sandboxed child is closing", async () => {
+  const h = harness();
+  const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, h.io);
+  const closing = h.svc.childExited(id);
+  await assert.rejects(h.svc.sendToChild(id, "hello", h.io), /closed and cannot be resumed/);
+  await closing;
+  assert.deepEqual(h.messages, []);
+  h.svc.dispose();
+});
+
 test("R-H7 send_message_to_child accepts only direct children", async () => {
   const h = harness();
   const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"] }, h.io);

@@ -351,8 +351,8 @@ R-H6. `close_thread` appends `{type:"closed", report?}` and returns `terminate: 
       parent emits `child_closed` with the report. The thread session then exits through
       the subagent auto-exit path.
 R-H7. `send_message_to_child` accepts only running direct children recorded in the parent's own
-      thread registry. It calls `subagent_message` with the thread's name. Closed threads cannot
-      be resumed via this tool; reject the message and tell the caller to spawn a new thread.
+      thread registry. It calls `subagent_message` with the thread's name. Threads that have begun
+      closing or are closed cannot receive messages; tell the caller to spawn a new thread.
 R-H7a. Interactive transport failures returned in the nested tool's `details.error` are failures
        even when `executeTool` reports `isError: false`; propagate them to the caller. A failed
        launch must not leave a running thread record or sandbox.
@@ -383,7 +383,8 @@ R-S2. `<root>` is added to `.git/info/exclude` so worktrees never show up as unt
 R-S3. On `child_closed`, if `sandbox.autoCommit`, commit all changes in the worktree with
       hooks disabled (`-c core.hooksPath=/dev/null`) and the message `thread <id>`.
 R-S4. The `child_closed` event lists `git diff --stat` against the base and the branch name.
-R-S5. `squash_sandbox` merges the child branch into the caller's worktree with
+R-S5. `squash_sandbox` rejects running children and children still finalizing their sandbox;
+      only after finalization completes may it merge the child branch into the caller's worktree with
       `git merge --squash`. If the caller is a sandboxed thread, the result is committed
       (same rules as R-S3). If the caller is the root session, the changes stay staged and
       uncommitted, and the user must confirm first (`ctx.ui.confirm`). Without UI the call
@@ -396,7 +397,9 @@ R-S7. After a successful squash the worktree is removed and the branch is kept. 
       git branch counts as merged when its current tip was squashed, or when it moved past
       its recorded base and is an ancestor of HEAD. Moving a branch after a squash invalidates
       its squash marker; legacy markers without a recorded tip do not prove it merged. A fresh
-      branch is never merged. Before recursively deleting a jj workspace directory, removal
+      branch is never merged. A jj bookmark counts as merged only when its current commit
+      matches the recorded post-squash commit; old path-only markers are not proof of a merge.
+      Before recursively deleting a jj workspace directory, removal
       verifies its registered name and path and its repository pointer; if verification fails,
       it leaves both the directory and the registered workspace intact.
 R-S9. When the subagent process of a thread ends without `close_thread`, the parent closes the

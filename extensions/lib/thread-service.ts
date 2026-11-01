@@ -323,7 +323,7 @@ export class ThreadService {
           .join(", ") || "(none)";
       throw new Error(`${threadId} is not a direct child of ${this.d.identity.id}. Your children: ${known}`);
     }
-    if (child.record.status === "closed") {
+    if (child.closing || child.record.status === "closed") {
       throw new Error(`Thread ${threadId} is closed and cannot be resumed. Spawn a new thread for further work.`);
     }
     if (child.record.transport === "subagents") {
