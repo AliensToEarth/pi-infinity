@@ -217,7 +217,7 @@ export class GitSandbox implements SandboxBackend {
     // Pin both the merge and its marker to the same tip, even if the branch moves
     // while the merge is running.
     const tip = (await git(targetPath, ["rev-parse", "--verify", `refs/heads/${sb.branch}^{commit}`], this.env)).trim();
-    const merge = await run(targetPath, ["merge", "--squash", tip], this.env);
+    const merge = await run(targetPath, ["merge", "--squash", "--no-overwrite-ignore", tip], this.env);
     if (merge.code !== 0) {
       const conflicts = lines(await git(targetPath, ["diff", "--name-only", "--diff-filter=U"], this.env));
       // The tree was verified clean before the merge, so a hard reset can only undo

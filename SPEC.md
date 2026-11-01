@@ -391,7 +391,9 @@ R-S5. `squash_sandbox` rejects running children and children still finalizing th
       `git merge --squash`. If the caller is a sandboxed thread, the result is committed
       (same rules as R-S3). If the caller is the root session, the changes stay staged and
       uncommitted, and the user must confirm first (`ctx.ui.confirm`). Without UI the call
-      refuses.
+      refuses. Both backends refuse a target with uncommitted file changes, rather than
+      mixing unrelated work into the squash or its commit. Git squash refuses to overwrite
+      ignored files in the target.
 R-S6. Conflicts abort the squash (`git merge --abort` or reset), leave the child branch
       intact, and return the conflicting paths as an error result.
 R-S7. After a successful squash the worktree is removed and the branch is kept. `/infinity

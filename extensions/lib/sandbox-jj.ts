@@ -215,6 +215,16 @@ export class JjSandbox implements SandboxBackend {
   }
 
   async squashInto(targetPath: string, sb: Sandbox, opts: { commit: boolean; message?: string }): Promise<SquashResult> {
+    // Snapshot and check the destination before touching the source. Otherwise
+    // commit mode would silently include the user's existing working-copy edits.
+    const targetChanges = await this.jjWs(targetPath, ["diff", "-r", "@", "--summary"]);
+    if (targetChanges.trim() !== "") {
+      return {
+        ok: false,
+        conflicts: [],
+        error: `refusing to squash into ${targetPath}: it has uncommitted changes, sandbox work must never be mixed with user work`,
+      };
+    }
     // One command does two jobs: -R selects the sandbox as the current
     // workspace, so jj snapshots it (capturing work that was never described),
     // and the summary counts the squashed content. Count before the squash:

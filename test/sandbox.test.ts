@@ -305,6 +305,21 @@ test("R-S5 squash refuses a target with uncommitted changes", async (t) => {
   assert.equal(readFileSync(join(repo, "file.txt"), "utf8"), "user edit\n");
 });
 
+test("R-S5 squash refuses to overwrite ignored target files", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial commit");
+  const b = backend();
+  const sb = await b.create({ cwd: repo, id: "ignored" });
+  writeFileSync(join(sb.path, "secret.txt"), "sandbox version\n");
+  await b.commitAll(sb, "sandbox work");
+  writeFileSync(join(repo, ".git", "info", "exclude"), "secret.txt\n", { flag: "a" });
+  writeFileSync(join(repo, "secret.txt"), "valuable ignored file\n");
+  const result = await b.squashInto(repo, sb, { commit: true });
+  assert.equal(result.ok, false);
+  assert.equal(readFileSync(join(repo, "secret.txt"), "utf8"), "valuable ignored file\n");
+  assert.equal(readFileSync(join(sb.path, "secret.txt"), "utf8"), "sandbox version\n");
+});
+
 test("R-S7 remove deletes the worktree and optionally the branch", async (t) => {
   const repo = await initRepo(t);
   await commitFile(repo, "file.txt", "base\n", "initial commit");

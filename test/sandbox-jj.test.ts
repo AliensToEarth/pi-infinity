@@ -230,6 +230,25 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
     assert.equal(readFileSync(join(repo, "file.txt"), "utf8"), "from sandbox\n");
   });
 
+  t.test("R-S5 squash refuses existing target changes without altering either workspace", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const b = backend(env);
+    const sb = await b.create({ cwd: repo, id: "dirty-target" });
+    writeFileSync(join(sb.path, "sandbox.txt"), "sandbox work\n");
+    await b.commitAll(sb, "sandbox work");
+    const sourceBefore = await commitId(repo, env, sb.branch);
+    writeFileSync(join(repo, "user.txt"), "user work\n");
+    for (const commit of [false, true]) {
+      const result = await b.squashInto(repo, sb, { commit });
+      assert.equal(result.ok, false);
+      if (!result.ok) assert.match(result.error ?? "", /uncommitted changes/);
+      assert.equal(readFileSync(join(repo, "user.txt"), "utf8"), "user work\n");
+      assert.equal(existsSync(join(repo, "sandbox.txt")), false);
+      assert.equal(await commitId(repo, env, sb.branch), sourceBefore);
+      assert.equal(readFileSync(join(sb.path, "sandbox.txt"), "utf8"), "sandbox work\n");
+    }
+  });
+
   t.test("R-S5 a second child and a no-op squash behave", async (t) => {
     const { repo, env } = await initRepo(t, { colocate: false });
     const b = backend(env);
