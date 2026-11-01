@@ -138,7 +138,7 @@ npm install
 
 | Tool | Purpose |
 |------|---------|
-| `bg_run` | Start a shell command in the background and return at once. The exit arrives as an event. Optional `watch` regexes. |
+| `bg_run` | Start a shell command in the background and return at once. The exit arrives as an event. Optional `watch` regexes and macOS write isolation. |
 | `bg_output` | Read a job's output without waiting, as a tail or a byte range. |
 | `bg_cancel` | Cancel one job or all. SIGTERM, then SIGKILL after 3 s. Safe to repeat. |
 | `bg_list` | List jobs. |
@@ -181,6 +181,22 @@ Bash calls that have no timeout get one of 180 seconds.
 **Result guard.** A tool result over 40000 characters is saved to a file and replaced by its
 head, tail and the path, with a hint to page through it with `read`. `read` itself is exempt,
 so the saved file can be read in pieces without being spilled again.
+
+### Optional background process isolation
+
+`bg_run({command: "npm test", cwd: "/path/to/project", isolate: true})` uses macOS
+`/usr/bin/sandbox-exec` to deny filesystem writes outside the canonical `cwd`. Isolation
+is off by default and requires an explicit `cwd`. Unsupported platforms and missing
+`sandbox-exec` fail closed; a sandbox initialization failure exits the job without running
+its command. Symlinks are resolved by the OS: a link inside the directory does not grant
+writes to a target outside it. Logs are written by pi outside the sandbox.
+
+This reduces accidental writes, not a security guarantee. Reads and network access remain
+allowed, other processes may be contacted, and all files within `cwd` remain writable.
+Choose a narrow directory; `/` provides no useful write restriction. Some tools require
+writes to caches or temporary directories outside `cwd` and may fail. macOS
+`sandbox-exec` is deprecated and may disappear or change in future releases. Git worktrees
+and jj workspaces are separate checkout isolation, not process security boundaries.
 
 ## Threads and sandboxes
 

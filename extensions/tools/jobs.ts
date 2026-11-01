@@ -29,9 +29,16 @@ export function jobTools(rt: () => Runtime): ToolDef[] {
       watch: Type.Optional(Type.Array(Type.String(), { description: "JS regex sources. Matching lines produce job_match events" })),
       associative: Type.Optional(Type.Boolean({ description: "Deliver every matching batch without the rate limit. Default false" })),
       timeout_seconds: Type.Optional(Type.Number({ description: "Stop the job after this many seconds. Default none" })),
+      isolate: Type.Optional(
+        Type.Boolean({
+          description:
+            "macOS only: restrict writes to explicit cwd. Not a security boundary; reads and network remain allowed. Default false; fails closed if unsupported.",
+        }),
+      ),
     }),
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       const r = rt();
+      if (params.isolate && !params.cwd) throw new Error("isolate requires an explicit cwd");
       const job = r.jobs.start({
         command: params.command,
         name: params.name,
@@ -39,6 +46,7 @@ export function jobTools(rt: () => Runtime): ToolDef[] {
         watch: params.watch,
         associative: params.associative,
         timeoutSeconds: params.timeout_seconds,
+        isolate: params.isolate,
         callId: toolCallId,
       });
       const text =

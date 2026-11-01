@@ -4,6 +4,7 @@ import { join } from "node:path";
 import type { InfinityConfig } from "./config.ts";
 import type { EventInput } from "./events.ts";
 import type { Logger } from "./log.ts";
+import { isolatedCommand } from "./process-isolation.ts";
 
 export type JobStatus = "running" | "exited" | "signaled" | "cancelled" | "timeout" | "error";
 
@@ -36,6 +37,7 @@ export interface StartOptions {
   watch?: string[];
   associative?: boolean;
   timeoutSeconds?: number;
+  isolate?: boolean;
   callId?: string;
 }
 
@@ -136,6 +138,7 @@ export class JobManager {
     }
     if (opts.command.trim() === "") throw new Error("command must not be empty");
     const patterns = compileWatch(opts.watch ?? []);
+    const isolated = opts.isolate ? isolatedCommand(opts.command, opts.cwd) : undefined;
     mkdirSync(this.deps.logDir, { recursive: true });
     let id: string;
     let logPath: string;
@@ -183,7 +186,14 @@ export class JobManager {
     this.jobs.set(id, st);
     let child: ChildProcess;
     try {
-      child = (this.deps.spawn ?? defaultSpawn)(opts.command, opts.cwd);
+      child = isolated
+        ? nodeSpawn(isolated.executable, isolated.args, {
+            cwd: opts.cwd,
+            detached: true,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: process.env,
+          })
+        : (this.deps.spawn ?? defaultSpawn)(opts.command, opts.cwd);
     } catch (err) {
       this.fail(st, err);
       return job;

@@ -233,7 +233,7 @@ Tools:
 
 | Tool | Parameters | Returns |
 |------|-----------|---------|
-| `bg_run` | `command` (string), `name?`, `cwd?`, `watch?` (string[] of JS regex sources), `associative?` (boolean, default false), `timeout_seconds?` | immediately, job id, pid, log path |
+| `bg_run` | `command` (string), `name?`, `cwd?`, `watch?` (string[] of JS regex sources), `associative?` (boolean, default false), `timeout_seconds?`, `isolate?` (boolean, default false) | immediately, job id, pid, log path |
 | `bg_output` | `id`, `tail?` (lines, default 40), `since?` (byte offset) | bounded text plus next offset |
 | `bg_cancel` | `id` or `all: true` | state after the call, idempotent |
 | `bg_list` | none | table of jobs |
@@ -276,6 +276,13 @@ R-J10. At most `jobs.max` jobs run at once. Further `bg_run` calls fail with a m
 R-J11. A user interrupt (escape) does not cancel jobs. Background work is the point.
 R-J12. The `bg_run` description tells the model not to poll, not to sleep, and to end its turn
        or do independent work after dispatch.
+R-J13. Opt-in `isolate: true` runs the job under macOS `/usr/bin/sandbox-exec`, denying
+       filesystem writes outside the canonical working directory, which must be explicitly supplied.
+       The default remains unrestricted. Symlinks do not grant writes outside that directory.
+       Unsupported platforms, unavailable sandbox-exec, invalid working directories and profile
+       setup failures must not run the command unrestricted. Network and reads remain allowed.
+       This is accidental-write reduction, not a security guarantee: the working directory may
+       contain sensitive files, other processes can still be contacted, and sandbox-exec is deprecated.
 
 ### 5.2 Bash guard (P1)
 
