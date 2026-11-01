@@ -193,6 +193,34 @@ test("R-S5 squash into a sandbox worktree commits the result", async (t) => {
   assert.equal((await xgit(repo, ["rev-parse", "sandbox-child"])).trim(), (await xgit(child.path, ["rev-parse", "HEAD"])).trim());
 });
 
+test("R-S7 squash markers do not mark later branch work merged", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial commit");
+  const b = backend();
+  const sb = await b.create({ cwd: repo, id: "changed" });
+  writeFileSync(join(sb.path, "first.txt"), "first\n");
+  await b.commitAll(sb, "first");
+  assert.equal((await b.squashInto(repo, sb, { commit: true })).ok, true);
+  assert.equal((await b.list(repo))[0].merged, true);
+  writeFileSync(join(sb.path, "second.txt"), "second\n");
+  await b.commitAll(sb, "second");
+  await b.remove(sb, { keepBranch: true });
+  assert.equal((await b.list(repo))[0].merged, false);
+  assert.deepEqual(await b.pruneMerged(repo), []);
+  assert.equal((await xgit(repo, ["show", "sandbox-changed:second.txt"])).trim(), "second");
+});
+
+test("R-S7 legacy squash markers do not prove a branch merged", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial commit");
+  const b = backend();
+  const sb = await b.create({ cwd: repo, id: "legacy" });
+  await xgit(repo, ["config", "branch.sandbox-legacy.pi-infinity-squashed", repo]);
+  await b.remove(sb, { keepBranch: true });
+  assert.equal((await b.list(repo))[0].merged, false);
+  assert.deepEqual(await b.pruneMerged(repo), []);
+});
+
 test("R-S5 squash into the main checkout without commit leaves changes staged", async (t) => {
   const repo = await initRepo(t);
   await commitFile(repo, "file.txt", "base\n", "initial commit");

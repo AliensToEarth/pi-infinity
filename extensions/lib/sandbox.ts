@@ -214,7 +214,10 @@ export class GitSandbox implements SandboxBackend {
         error: `refusing to squash into ${targetPath}: it has uncommitted or staged changes, sandbox work must never be mixed with user work`,
       };
     }
-    const merge = await run(targetPath, ["merge", "--squash", sb.branch], this.env);
+    // Pin both the merge and its marker to the same tip, even if the branch moves
+    // while the merge is running.
+    const tip = (await git(targetPath, ["rev-parse", "--verify", `refs/heads/${sb.branch}^{commit}`], this.env)).trim();
+    const merge = await run(targetPath, ["merge", "--squash", tip], this.env);
     if (merge.code !== 0) {
       const conflicts = lines(await git(targetPath, ["diff", "--name-only", "--diff-filter=U"], this.env));
       // The tree was verified clean before the merge, so a hard reset can only undo
@@ -231,7 +234,7 @@ export class GitSandbox implements SandboxBackend {
     // Marker read by list() and pruneMerged(). Without it an uncommitted squash
     // would be indistinguishable from a branch that was never used, and a squashed
     // branch could be pruned while its work still sits staged.
-    await git(targetPath, ["config", `branch.${sb.branch}.${SQUASHED_KEY}`, targetPath], this.env);
+    await git(targetPath, ["config", `branch.${sb.branch}.${SQUASHED_KEY}`, tip], this.env);
     return { ok: true, commitSha, filesChanged: staged.length };
   }
 
@@ -370,7 +373,10 @@ export class GitSandbox implements SandboxBackend {
 
   private async isMerged(repoRoot: string, branch: string): Promise<boolean> {
     const marker = await run(repoRoot, ["config", `branch.${branch}.${SQUASHED_KEY}`], this.env);
-    if (marker.code === 0 && marker.stdout.trim() !== "") return true;
+    if (marker.code === 0 && /^[0-9a-f]{40,64}$/.test(marker.stdout.trim())) {
+      const tip = await git(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`], this.env);
+      if (tip.trim() === marker.stdout.trim()) return true;
+    }
     const ancestor = await run(repoRoot, ["merge-base", "--is-ancestor", branch, "HEAD"], this.env);
     if (ancestor.code !== 0) return false;
     const base = await run(repoRoot, ["config", `branch.${branch}.${BASE_KEY}`], this.env);

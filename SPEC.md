@@ -382,8 +382,10 @@ R-S6. Conflicts abort the squash (`git merge --abort` or reset), leave the child
 R-S7. After a successful squash the worktree is removed and the branch is kept. `/infinity
       sandboxes` lists branches, `/infinity prune` deletes merged ones after confirmation and
       refuses while the working tree holds applied sandbox work that is not committed. A
-      branch counts as merged when it was squashed, or when it moved past its recorded base
-      and is an ancestor of HEAD. A fresh branch is never merged.
+      git branch counts as merged when its current tip was squashed, or when it moved past
+      its recorded base and is an ancestor of HEAD. Moving a branch after a squash invalidates
+      its squash marker; legacy markers without a recorded tip do not prove it merged. A fresh
+      branch is never merged.
 R-S9. When the subagent process of a thread ends without `close_thread`, the parent closes the
       thread itself (commit, diff stat, `child_closed` event). When `close_thread` already
       ran, the generic subagent exit message is shortened to one line.
