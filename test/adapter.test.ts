@@ -180,6 +180,21 @@ test("R-E6 recovers timer fired before outbox persistence without replaying deli
   await s.emit("session_shutdown", { type: "session_shutdown" }, acknowledged);
 });
 
+test("R-E6 malformed pending entry does not hide a fired timer on restart", async () => {
+  const s = await started();
+  const timer = { id: "timer-bad-outbox", kind: "sleep", setAt: 100, dueAt: 200 };
+  const records = [
+    { type: "custom", customType: "infinity-timer", data: { op: "set", timer } },
+    { type: "custom", customType: "infinity-timer", data: { op: "fired", id: timer.id, at: 200 } },
+    { type: "custom", customType: "infinity-event-pending", data: { sourceId: timer.id, kind: "timer", seq: 0 } },
+  ];
+  const ctx = { ...s.ctx, sessionManager: { ...s.ctx.sessionManager, getBranch: () => records } };
+  await s.emit("session_start", { type: "session_start" }, ctx);
+  assert.equal(s.sent.length, 1);
+  assert.match(s.sent[0].m.content, /timer timer-bad-outbox fired/);
+  await s.emit("session_shutdown", { type: "session_shutdown" }, ctx);
+});
+
 test("R-E7 reused job ids after restart do not collide with acknowledged events", async () => {
   const f = fakePi();
   piInfinity(f.pi as never);

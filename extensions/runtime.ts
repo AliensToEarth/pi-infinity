@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type InfinityConfig } from "./lib/config.ts";
-import { Emitter, eventIdOf, type EventInput } from "./lib/events.ts";
+import { Emitter, eventIdOf, isEventInput, type EventInput } from "./lib/events.ts";
 import { JobManager } from "./lib/jobs.ts";
 import { createLogger, type Logger } from "./lib/log.ts";
 import { GitSandbox } from "./lib/sandbox.ts";
@@ -78,10 +78,7 @@ export function missingTimerEvents(
         if (timer && Number.isFinite(timer.dueAt)) fired.push(timerEvent(timer, record.at));
       }
     } else if (entry.type === "custom" && entry.customType === "infinity-event-pending") {
-      const input = entry.data as Partial<EventInput> | undefined;
-      if (input && typeof input.sourceId === "string" && typeof input.kind === "string" && typeof input.seq === "number") {
-        present.add(eventIdOf(input as EventInput));
-      }
+      if (isEventInput(entry.data)) present.add(eventIdOf(entry.data));
     } else if (entry.type === "custom_message" && entry.customType === "infinity-event") {
       const details = entry.details as { eventId?: unknown } | undefined;
       if (typeof details?.eventId === "string") present.add(details.eventId);

@@ -105,7 +105,7 @@ export function spillIfLarge(
   return { text: `${head}\n${marker}\n${tail}`, path: saved ? path : undefined };
 }
 
-function isEventInput(value: unknown): value is EventInput {
+export function isEventInput(value: unknown): value is EventInput {
   if (!value || typeof value !== "object") return false;
   const input = value as Partial<EventInput>;
   return (
