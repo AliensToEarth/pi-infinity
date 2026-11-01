@@ -233,7 +233,8 @@ R-J1. `bg_run` returns before the process produces output. It never waits.
 R-J2. The process starts in its own process group (`detached: true`, shell `-c`) so a cancel
       reaches grandchildren.
 R-J3. All output (stdout and stderr merged in arrival order) goes to the job log file. An
-      in-memory ring buffer holds the last 64 KiB for fast tails.
+      in-memory ring buffer holds the last 64 KiB for fast tails. Job log paths are unique
+      within the artifact directory, including across runtime restarts; existing logs are never reused.
 R-J4. Exit always emits one `job_exit` event with status (`exited`, `signaled`, `cancelled`,
       `timeout`, `error`), exit code, duration, the last `jobs.tailLines` lines, line count,
       and the log path. Tail is subject to R-E2.
@@ -251,7 +252,8 @@ R-J8. `bg_cancel` sends SIGTERM to the group, waits 3 s, sends SIGKILL if still 
       returns without waiting for the exit. A second cancel on the same job is a no-op that
       reports the current state. Cancelling an unknown id is an error result, not a throw.
 R-J9. On `session_shutdown` every running job is cancelled with the same procedure, without
-      waiting. Jobs do not survive a restart. This is stated in the tool description.
+      waiting. Disposing the runtime must not cancel the pending SIGKILL escalation for a
+      process that ignored SIGTERM. Jobs do not survive a restart. This is stated in the tool description.
 R-J10. At most `jobs.max` jobs run at once. Further `bg_run` calls fail with a message that
        lists running jobs.
 R-J11. A user interrupt (escape) does not cancel jobs. Background work is the point.

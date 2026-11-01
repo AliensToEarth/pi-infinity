@@ -49,6 +49,18 @@ test("R-J1 start returns before output and exit emits exactly one job_exit", asy
   assert.equal(mgr.get(job.id)?.status, "exited");
 });
 
+test("R-J3 restarting a manager does not reuse existing job logs", async () => {
+  const { mgr, dir, events, logger } = setup();
+  const first = mgr.start({ command: "echo old", cwd: tmpdir() });
+  await until(() => exits(events).length === 1);
+  const restarted = new JobManager({ emit: (e) => void events.push(e), logDir: dir, config: DEFAULT_CONFIG.jobs, logger });
+  const second = restarted.start({ command: "echo new", cwd: tmpdir() });
+  await until(() => exits(events).length === 2);
+  assert.notEqual(second.logPath, first.logPath);
+  assert.equal(readFileSync(first.logPath, "utf8"), "old\n");
+  assert.equal(restarted.output(second.id, { since: 0 }).text, "new\n");
+});
+
 test("R-J4 failing command reports its exit code and log path", async () => {
   const { mgr, events } = setup();
   const job = mgr.start({ command: "echo bad; exit 3", cwd: tmpdir() });
@@ -150,6 +162,17 @@ test("R-J9 cancelAll stops every running job", async () => {
   assert.equal(mgr.cancelAll(), 2);
   await until(() => exits(events).length === 2);
   assert.equal(mgr.runningCount(), 0);
+});
+
+test("R-J9 dispose preserves shutdown SIGKILL escalation", async () => {
+  const { mgr, events } = setup();
+  const job = mgr.start({ command: "trap '' TERM; echo ready; while true; do sleep 1; done", cwd: tmpdir() });
+  await until(() => mgr.output(job.id, {}).text.includes("ready"));
+  mgr.cancelAll();
+  mgr.dispose();
+  await until(() => exits(events).length === 1, 4000);
+  assert.equal(job.status, "cancelled");
+  assert.equal(job.signal, "SIGKILL");
 });
 
 test("bg_output reads a tail and a byte range", async () => {

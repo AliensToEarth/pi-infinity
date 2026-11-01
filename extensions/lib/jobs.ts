@@ -136,9 +136,20 @@ export class JobManager {
     }
     if (opts.command.trim() === "") throw new Error("command must not be empty");
     const patterns = compileWatch(opts.watch ?? []);
-    const id = `j${++this.counter}`;
     mkdirSync(this.deps.logDir, { recursive: true });
-    const logPath = join(this.deps.logDir, `${id}.log`);
+    let id: string;
+    let logPath: string;
+    for (;;) {
+      id = `j${++this.counter}`;
+      logPath = join(this.deps.logDir, `${id}.log`);
+      try {
+        const fd = openSync(logPath, "wx");
+        closeSync(fd);
+        break;
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      }
+    }
     const job: Job = {
       id,
       name: opts.name?.trim() || opts.command.trim().split(/\s+/)[0] || id,
@@ -170,9 +181,6 @@ export class JobManager {
       exitSeen: false,
     };
     this.jobs.set(id, st);
-    const fd = openSync(logPath, "a");
-    closeSync(fd);
-
     let child: ChildProcess;
     try {
       child = (this.deps.spawn ?? defaultSpawn)(opts.command, opts.cwd);
@@ -239,10 +247,10 @@ export class JobManager {
     return count;
   }
 
-  /** Release every timer. Used when the extension runtime is discarded. */
+  /** Release timers except a pending kill escalation. Used when the runtime is discarded. */
   dispose(): void {
     for (const st of this.jobs.values()) {
-      for (const t of [st.flushTimer, st.killTimer, st.timeoutTimer, st.closeTimer]) if (t) clearTimeout(t);
+      for (const t of [st.flushTimer, st.timeoutTimer, st.closeTimer]) if (t) clearTimeout(t);
     }
   }
 
