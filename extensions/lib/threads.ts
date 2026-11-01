@@ -45,10 +45,10 @@ export interface ThreadRecord {
 }
 
 export function newThreadId(): string {
-  return `t-${randomBytes(3).toString("hex")}`;
+  return `t-${randomBytes(16).toString("hex")}`;
 }
 
-const THREAD_ID = /^t-[0-9a-f]{6}$/;
+const THREAD_ID = /^t-(?:[0-9a-f]{6}|[0-9a-f]{32})$/;
 
 export function isThreadId(id: string): boolean {
   return id === ROOT_ID || THREAD_ID.test(id);

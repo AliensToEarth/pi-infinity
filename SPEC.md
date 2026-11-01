@@ -352,8 +352,11 @@ and does not register its tools.
 | `send_message_to_child` | root and thread agents | `thread_id`, `message` |
 | `squash_sandbox` | root and thread agents | `thread_id`, `commit?` |
 
-Thread ids look like `t-1a2b3c`. The root thread id is `root`. A thread's stack is the list
-of ids from root to itself.
+New thread ids are `t-` followed by 32 lowercase hexadecimal digits; legacy six-digit ids
+remain valid. The root thread id is `root`. A thread's stack is the list of ids from root to itself.
+
+R-H0. New thread ids contain 128 random bits, making collisions across sessions and processes
+      negligibly likely without persistent allocation state.
 
 R-H1. `spawn_thread` checks `child_of` against the caller's real stack. The real stack is
       `["root"]` in the main session and is read from the thread file in a thread session.

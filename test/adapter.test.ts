@@ -312,7 +312,7 @@ test("R-X1 R-X3 R-X6 spawn_thread on pi-subagents returns at once and delivers t
     assert.equal(executed.length, 1);
     assert.equal(executed[0].name, "subagent");
     assert.deepEqual(Object.keys(executed[0].args).sort(), ["agent", "task"]);
-    assert.match(executed[0].args.agent, /^thread-t-[0-9a-f]{6}$/);
+    assert.match(executed[0].args.agent, /^thread-t-[0-9a-f]{32}$/);
     assert.match(executed[0].args.task, /list files/);
     assert.ok(executed[0].signal && !executed[0].signal.aborted);
     assert.deepEqual(calls, [`register ${executed[0].args.agent}`]);
@@ -355,7 +355,7 @@ test("R-X1 R-X2 with both subagent tools present the interactive path is used un
     assert.match(out.content[0].text, /reports and its close arrive/);
     assert.equal(executed[0].name, "subagent");
     assert.equal(executed[0].args.agent, "thread-fresh");
-    assert.match(executed[0].args.name, /^t-[0-9a-f]{6}$/);
+    assert.match(executed[0].args.name, /^t-[0-9a-f]{32}$/);
     assert.deepEqual(calls, [], "the pi-subagents registry is untouched");
     await s.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, s.ctx);
   }));
