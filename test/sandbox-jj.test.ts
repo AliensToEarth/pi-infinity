@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -322,6 +322,48 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
     assert.equal(worktrees.includes("sandbox-gone"), false);
     // remove refuses to delete a path outside the sandbox root.
     await assert.rejects(b.remove({ ...gone, path: join(repo, "file.txt") }, { keepBranch: true }), /bug:/);
+  });
+
+  t.test("R-S7 removal supports an absolute sandbox root outside the repository", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const root = tempDir(t);
+    const b = backend(env);
+    const sb = await b.create({ cwd: repo, id: "external", root });
+    assert.equal(sb.path, join(root, "external"));
+    writeFileSync(join(sb.path, "work.txt"), "work\n");
+    await b.commitAll(sb, "work");
+    await b.remove(sb, { keepBranch: true });
+    assert.equal(existsSync(sb.path), false);
+    assert.equal((await xjj(repo, env, ["workspace", "list"])).includes(sb.branch), false);
+    assert.match(await commitId(repo, env, sb.branch), /^[0-9a-f]{40}$/);
+  });
+
+  t.test("R-S7 failed workspace creation never removes a concurrently created directory", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const bin = tempDir(t);
+    const realJj = (await exec("which", ["jj"], { env, encoding: "utf8" })).stdout.trim();
+    const wrapper = join(bin, "jj");
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\ncase "$*" in\n  *"workspace add"*)\n    for path do :; done\n    mkdir -p "$path"\n    printf 'valuable\\n' > "$path/valuable.txt"\n    exit 1;;\nesac\nexec "${realJj}" "$@"\n`,
+    );
+    chmodSync(wrapper, 0o755);
+    const b = backend({ ...env, PATH: `${bin}:${env.PATH}` });
+    await assert.rejects(b.create({ cwd: repo, id: "raced" }), /failed with exit code/);
+    assert.equal(readFileSync(join(repo, ".pi", "sandboxes", "raced", "valuable.txt"), "utf8"), "valuable\n");
+  });
+
+  t.test("R-S7 failed bookmark creation cleans up the owned workspace", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const bin = tempDir(t);
+    const realJj = (await exec("which", ["jj"], { env, encoding: "utf8" })).stdout.trim();
+    const wrapper = join(bin, "jj");
+    writeFileSync(wrapper, `#!/bin/sh\ncase "$*" in\n  *"bookmark create"*) exit 1;;\nesac\nexec "${realJj}" "$@"\n`);
+    chmodSync(wrapper, 0o755);
+    const b = backend({ ...env, PATH: `${bin}:${env.PATH}` });
+    await assert.rejects(b.create({ cwd: repo, id: "failed-bookmark" }), /failed with exit code/);
+    assert.equal(existsSync(join(repo, ".pi", "sandboxes", "failed-bookmark")), false);
+    assert.doesNotMatch(await xjj(repo, env, ["workspace", "list"]), /sandbox-failed-bookmark/);
   });
 
   t.test("R-S7 removal refuses unrelated and replaced directories without forgetting the workspace", async (t) => {

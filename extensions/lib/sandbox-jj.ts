@@ -6,7 +6,7 @@
 
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Logger } from "./log.ts";
 import { validateSandboxId } from "./sandbox.ts";
@@ -87,11 +87,6 @@ function lines(text: string): string[] {
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l !== "");
-}
-
-function isInside(parent: string, child: string): boolean {
-  const rel = relative(parent, child);
-  return rel !== "" && !isAbsolute(rel) && !rel.startsWith("..");
 }
 
 // jj has no per-repo key/value config like git, so squashed sandboxes are
@@ -178,14 +173,17 @@ export class JjSandbox implements SandboxBackend {
 
     this.excludeRoot(mainRoot, root);
     mkdirSync(dirname(path), { recursive: true });
+    let added = false;
     try {
       await jj(mainRoot, ["workspace", "add", "--name", branch, "-r", base, path], this.env);
+      added = true;
       // Run in the new workspace so @ is its working copy, and the bookmark
       // tags exactly that change.
       await jj(path, ["bookmark", "create", branch, "-r", "@"], this.env);
     } catch (err) {
-      // Never leave a half-created workspace or bookmark behind.
-      await this.cleanupFailedCreate(mainRoot, branch, path);
+      // A failed add does not prove ownership of the destination: another
+      // process may have created it since the initial existence check.
+      if (added) await this.cleanupFailedCreate({ id, branch, path, base, repoRoot: mainRoot });
       throw err;
     }
     return { id, branch, path, base, repoRoot: mainRoot };
@@ -270,12 +268,13 @@ export class JjSandbox implements SandboxBackend {
   }
 
   async remove(sb: Sandbox, opts: { keepBranch: boolean }): Promise<void> {
-    // rmSync below is recursive on an absolute path, so a hand-built Sandbox
-    // must never aim it outside the main workspace.
+    // Absolute roots outside the main workspace are supported; registration
+    // and repository-pointer checks below establish ownership before removal.
     const mainRoot = resolve(sb.repoRoot);
     const path = resolve(sb.path);
-    if (!isInside(mainRoot, path) || basename(path) !== sb.id) {
-      throw new Error(`bug: sandbox path ${path} is not ${sb.id} under the main root ${mainRoot}`);
+    validateSandboxId(sb.id);
+    if (path === mainRoot || basename(path) !== sb.id) {
+      throw new Error(`bug: sandbox path ${path} does not match id ${sb.id}`);
     }
     if (sb.branch !== `${PREFIX}${sb.id}`) throw new Error(`bug: sandbox branch ${sb.branch} does not match ${sb.id}`);
     const registered = (await this.workspaces(mainRoot)).get(sb.branch);
@@ -434,27 +433,13 @@ export class JjSandbox implements SandboxBackend {
     writeFileSync(markerPath, `${JSON.stringify(map, null, 2)}\n`);
   }
 
-  // Best effort: the original failure is what the caller needs to see. The
-  // bookmark is never deleted here: it is created last, so on failure it does
-  // not exist unless someone raced us, and then it is theirs.
-  private async cleanupFailedCreate(mainRoot: string, branch: string, path: string): Promise<void> {
+  // Best effort: keep the bookmark, which could belong to a racing process,
+  // and use the same ownership checks as normal removal for the directory.
+  private async cleanupFailedCreate(sb: Sandbox): Promise<void> {
     try {
-      const workspaces = await this.workspaces(mainRoot);
-      const root = workspaces.get(branch);
-      // Forget only a workspace that really is the half-created one, never one
-      // that merely shares the name.
-      if (root !== undefined && realpathSync(root) === realpathSync(path)) {
-        await jj(mainRoot, ["workspace", "forget", branch], this.env);
-      }
+      await this.remove(sb, { keepBranch: true });
     } catch (err) {
       this.logger.error("sandbox", err);
-    }
-    if (existsSync(path)) {
-      try {
-        rmSync(path, { recursive: true, force: true });
-      } catch (err) {
-        this.logger.error("sandbox", err);
-      }
     }
   }
 }

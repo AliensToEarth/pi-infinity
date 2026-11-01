@@ -215,6 +215,7 @@ R-E3. Delivery is always `steer` with `triggerTurn: true`, which is the same pat
 R-E4. A renderer is registered for `infinity-event`. Collapsed view is one line, expanded
       view shows the body.
 R-E5. The emitter never throws. Failures go to `logError` and a `ui.notify` warning.
+      If the warning itself fails, log that failure without propagating it.
 
 ## 5. Modules
 
@@ -349,7 +350,8 @@ R-H4. Before launch the parent writes the thread file. After launch it records t
       file returned by `subagent` and starts watching `<session>.reports.jsonl`.
 R-H5. `report_to_parent` appends one JSON line `{type:"report", seq, text, at}`. The parent
       watcher (fs.watch with a 1 s poll fallback) turns each line into a `child_report`
-      event once (dedup by `<thread>:report:<seq>`).
+      event once (dedup by `<thread>:report:<seq>`), preserving UTF-8 characters split
+      across reads. A disappeared inbox is ignored; other read errors are logged.
 R-H6. `close_thread` appends `{type:"closed", report?}` and returns `terminate: true`. The
       parent emits `child_closed` with the report. The thread session then exits through
       the subagent auto-exit path.
@@ -404,9 +406,11 @@ R-S7. After a successful squash the worktree is removed and the branch is kept. 
       its squash marker; legacy markers without a recorded tip do not prove it merged. A fresh
       branch is never merged. A jj bookmark counts as merged only when its current commit
       matches the recorded post-squash commit; old path-only markers are not proof of a merge.
-      Before recursively deleting a jj workspace directory, removal
-      verifies its registered name and path and its repository pointer; if verification fails,
-      it leaves both the directory and the registered workspace intact.
+      Before recursively deleting a jj workspace directory, including one under an absolute
+      sandbox root outside the repository, removal verifies its registered name and path and
+      its repository pointer; if verification fails, it leaves both the directory and the
+      registered workspace intact. Failed creation cleanup applies the same checks and never
+      deletes an unverified directory, including one created concurrently by another process.
 R-S9. When the subagent process of a thread ends without `close_thread`, the parent closes the
       thread itself (commit, diff stat, `child_closed` event). When `close_thread` already
       ran, the generic subagent exit message is shortened to one line.
