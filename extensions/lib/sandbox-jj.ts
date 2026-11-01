@@ -266,14 +266,27 @@ export class JjSandbox implements SandboxBackend {
     if (!isInside(mainRoot, path) || basename(path) !== sb.id) {
       throw new Error(`bug: sandbox path ${path} is not ${sb.id} under the main root ${mainRoot}`);
     }
-    // Check existence first instead of ignoring a not-found error, so real
-    // failures still surface.
-    if ((await this.workspaces(mainRoot)).has(sb.branch)) {
-      await jj(mainRoot, ["workspace", "forget", sb.branch], this.env);
+    if (sb.branch !== `${PREFIX}${sb.id}`) throw new Error(`bug: sandbox branch ${sb.branch} does not match ${sb.id}`);
+    const registered = (await this.workspaces(mainRoot)).get(sb.branch);
+    if (registered !== undefined && resolve(registered) !== path) {
+      throw new Error(`refusing to remove sandbox: workspace ${sb.branch} is registered at ${registered}, not ${path}`);
     }
     if (existsSync(path)) {
-      rmSync(path, { recursive: true, force: true });
+      if (registered === undefined) throw new Error(`refusing to remove sandbox: workspace ${sb.branch} is not registered`);
+      // A registered directory may have been replaced with unrelated user data.
+      // Check its repository pointer before forgetting it or deleting anything.
+      const pointer = join(path, ".jj", "repo");
+      let matches = false;
+      try {
+        const repo = resolve(dirname(pointer), readFileSync(pointer, "utf8").trim());
+        matches = realpathSync(repo) === realpathSync(join(mainRoot, ".jj", "repo"));
+      } catch (err) {
+        throw new Error(`refusing to remove sandbox: cannot verify workspace ${path}: ${message(err)}`);
+      }
+      if (!matches) throw new Error(`refusing to remove sandbox: workspace ${path} belongs to another repository`);
     }
+    if (registered !== undefined) await jj(mainRoot, ["workspace", "forget", sb.branch], this.env);
+    if (existsSync(path)) rmSync(path, { recursive: true, force: true });
     // Colocated repos carry a git worktree per workspace; forget normally
     // removes it, prune covers a forget that failed part way.
     if (existsSync(join(mainRoot, ".git"))) {

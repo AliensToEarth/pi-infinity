@@ -305,6 +305,29 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
     await assert.rejects(b.remove({ ...gone, path: join(repo, "file.txt") }, { keepBranch: true }), /bug:/);
   });
 
+  t.test("R-S7 removal refuses unrelated and replaced directories without forgetting the workspace", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const b = backend(env);
+    const sb = await b.create({ cwd: repo, id: "safe" });
+    const other = join(repo, "other", sb.id);
+    mkdirSync(other, { recursive: true });
+    writeFileSync(join(other, "valuable.txt"), "keep\n");
+    await assert.rejects(b.remove({ ...sb, path: other }, { keepBranch: true }), /registered at/);
+    assert.equal(readFileSync(join(other, "valuable.txt"), "utf8"), "keep\n");
+    assert.match(await xjj(repo, env, ["workspace", "list"]), /sandbox-safe/);
+
+    rmSync(sb.path, { recursive: true, force: true });
+    mkdirSync(sb.path, { recursive: true });
+    writeFileSync(join(sb.path, "valuable.txt"), "keep too\n");
+    await assert.rejects(b.remove(sb, { keepBranch: true }), /cannot verify workspace/);
+    assert.equal(readFileSync(join(sb.path, "valuable.txt"), "utf8"), "keep too\n");
+    assert.match(await xjj(repo, env, ["workspace", "list"]), /sandbox-safe/);
+
+    await xjj(repo, env, ["workspace", "forget", sb.branch]);
+    await assert.rejects(b.remove(sb, { keepBranch: true }), /not registered/);
+    assert.equal(readFileSync(join(sb.path, "valuable.txt"), "utf8"), "keep too\n");
+  });
+
   t.test("R-S7 list reports bookmarks, workspaces and merged state", async (t) => {
     const { repo, env } = await initRepo(t, { colocate: false });
     const b = backend(env);
