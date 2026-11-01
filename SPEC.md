@@ -235,9 +235,13 @@ R-J2. The process starts in its own process group (`detached: true`, shell `-c`)
 R-J3. All output (stdout and stderr merged in arrival order) goes to the job log file. An
       in-memory ring buffer holds the last 64 KiB for fast tails. Job log paths are unique
       within the artifact directory, including across runtime restarts; existing logs are never reused.
+      `bg_output` requires a non-negative safe integer `since` and a positive safe integer `tail`.
+      Byte-range reads never split UTF-8 characters: a `since` inside a character skips its
+      remaining bytes, and an incomplete character at the end is deferred to the next read.
 R-J4. Exit always emits one `job_exit` event with status (`exited`, `signaled`, `cancelled`,
       `timeout`, `error`), exit code, duration, the last `jobs.tailLines` lines, line count,
-      and the log path. Tail is subject to R-E2.
+      and the log path. Tail is subject to R-E2. The job timeout stops when the shell exits,
+      even if inherited output pipes remain open while the manager waits to finalize.
 R-J5. `watch` patterns are compiled at start. An invalid pattern or one longer than 200
       characters fails the call with a clear error and starts nothing.
 R-J6. Matching lines are batched. A batch is flushed after `watchDebounceMs` of quiet or at

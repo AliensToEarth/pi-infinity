@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -170,6 +173,28 @@ test("R-J4 timeout stops a job and reports it", async () => {
   assert.match(exits(events)[0].body, /timeout/);
 });
 
+test("R-J4 timeout stops at shell exit while output pipes remain open", async () => {
+  const child = Object.assign(new EventEmitter(), { pid: 12345, stdout: new PassThrough(), stderr: new PassThrough() });
+  const signals: string[] = [];
+  const events: EventInput[] = [];
+  const mgr = new JobManager({
+    emit: (event) => void events.push(event),
+    logDir: mkdtempSync(join(tmpdir(), "pi-inf-jobs-")),
+    config: DEFAULT_CONFIG.jobs,
+    logger: memoryLogger(),
+    spawn: () => child as unknown as ChildProcess,
+    killGroup: (_pid, signal) => void signals.push(signal),
+    closeGraceMs: 100,
+  });
+  const job = mgr.start({ command: "done", cwd: tmpdir(), timeoutSeconds: 0.02 });
+  child.emit("exit", 0, null);
+  await until(() => exits(events).length === 1);
+  assert.equal(job.status, "exited");
+  assert.deepEqual(signals, []);
+  child.stdout.destroy();
+  child.stderr.destroy();
+});
+
 test("R-J4 spawn failure becomes a job_exit with status error", async () => {
   const { mgr, events } = setup();
   const job = mgr.start({ command: "echo hi", cwd: "/definitely/not/a/dir" });
@@ -206,6 +231,30 @@ test("bg_output reads a tail and a byte range", async () => {
   const part = mgr.output(job.id, { since: 7, maxBytes: 14 });
   assert.equal(part.text, "line-2\nline-3\n");
   assert.equal(part.nextOffset, 21);
+});
+
+test("R-J3 byte ranges preserve UTF-8 characters and offsets", async () => {
+  const { mgr, events } = setup();
+  const job = mgr.start({ command: `printf '%s' '${"a".repeat(7999)}😀z'`, cwd: tmpdir() });
+  await until(() => exits(events).length > 0);
+  const first = mgr.output(job.id, { since: 0 });
+  assert.equal(first.text, "a".repeat(7999));
+  assert.equal(first.nextOffset, 7999);
+  const second = mgr.output(job.id, { since: first.nextOffset });
+  assert.equal(second.text, "😀z");
+  assert.equal(second.nextOffset, 8004);
+  assert.equal(mgr.output(job.id, { since: 8000 }).text, "z");
+});
+
+test("R-J3 output rejects invalid byte offsets and line counts", () => {
+  const { mgr } = setup();
+  const job = mgr.start({ command: "true", cwd: tmpdir() });
+  for (const since of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => mgr.output(job.id, { since }), /since must be/);
+  }
+  for (const tail of [-1, 0, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    assert.throws(() => mgr.output(job.id, { tail }), /tail must be/);
+  }
 });
 
 test("process with a lingering grandchild still finalizes", async () => {

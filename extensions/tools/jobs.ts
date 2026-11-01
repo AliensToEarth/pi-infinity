@@ -55,8 +55,8 @@ export function jobTools(rt: () => Runtime): ToolDef[] {
       "Read output of a background job without waiting. Default is the last lines. With since, read a byte range of the log from that offset and get the next offset back. Bounded to 8000 bytes per call.",
     parameters: Type.Object({
       id: Type.String({ description: "Job id such as j1" }),
-      tail: Type.Optional(Type.Number({ description: "Number of last lines, default 40" })),
-      since: Type.Optional(Type.Number({ description: "Byte offset into the log" })),
+      tail: Type.Optional(Type.Integer({ minimum: 1, description: "Number of last lines, default 40" })),
+      since: Type.Optional(Type.Integer({ minimum: 0, description: "Byte offset into the log" })),
     }),
     async execute(_id, params) {
       const out = rt().jobs.output(params.id, { tail: params.tail, since: params.since });

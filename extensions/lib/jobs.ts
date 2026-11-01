@@ -258,22 +258,44 @@ export class JobManager {
   output(id: string, opts: { tail?: number; since?: number; maxBytes?: number }): { text: string; nextOffset: number; status: JobStatus } {
     const st = this.jobs.get(id);
     if (!st) throw new Error(`unknown job id ${JSON.stringify(id)}`);
+    if (opts.since !== undefined && (!Number.isSafeInteger(opts.since) || opts.since < 0)) {
+      throw new Error("since must be a non-negative safe integer byte offset");
+    }
+    if (opts.tail !== undefined && (!Number.isSafeInteger(opts.tail) || opts.tail < 1)) {
+      throw new Error("tail must be a positive safe integer");
+    }
     const max = opts.maxBytes ?? 8000;
+    if (!Number.isSafeInteger(max) || max < 4) throw new Error("maxBytes must be a safe integer of at least 4");
     if (opts.since === undefined) {
       const text = lastLines(st.ring, opts.tail ?? this.deps.config.tailLines);
-      return { text: text.length > max ? text.slice(text.length - max) : text, nextOffset: st.job.bytes, status: st.job.status };
+      const bytes = Buffer.from(text);
+      let start = Math.max(0, bytes.length - max);
+      while (start < bytes.length && (bytes[start] & 0xc0) === 0x80) start++;
+      return { text: bytes.toString("utf8", start), nextOffset: st.job.bytes, status: st.job.status };
     }
     const size = statSync(st.job.logPath).size;
     const from = Math.min(Math.max(0, opts.since), size);
     const len = Math.min(max, size - from);
     const buf = Buffer.alloc(len);
     const fd = openSync(st.job.logPath, "r");
+    let bytesRead: number;
     try {
-      readSync(fd, buf, 0, len, from);
+      bytesRead = readSync(fd, buf, 0, len, from);
     } finally {
       closeSync(fd);
     }
-    return { text: buf.toString("utf8"), nextOffset: from + len, status: st.job.status };
+    // A caller may supply an arbitrary byte offset inside a multibyte character.
+    let start = 0;
+    while (start < bytesRead && (buf[start] & 0xc0) === 0x80) start++;
+    let end = bytesRead;
+    if (end > start) {
+      let lead = end - 1;
+      while (lead > start && (buf[lead] & 0xc0) === 0x80) lead--;
+      const byte = buf[lead];
+      const width = byte >= 0xf0 && byte <= 0xf4 ? 4 : byte >= 0xe0 && byte <= 0xef ? 3 : byte >= 0xc2 && byte <= 0xdf ? 2 : 1;
+      if (end - lead < width) end = lead;
+    }
+    return { text: buf.toString("utf8", start, end), nextOffset: from + end, status: st.job.status };
   }
 
   private requestKill(st: Internal): void {
@@ -362,6 +384,8 @@ export class JobManager {
 
   private onExit(st: Internal, code: number | null, signal: NodeJS.Signals | null): void {
     st.exitSeen = true;
+    if (st.timeoutTimer) clearTimeout(st.timeoutTimer);
+    st.timeoutTimer = undefined;
     st.job.exitCode = code;
     st.job.signal = signal;
     // Grandchildren may keep stdio open. Do not wait for them forever.
