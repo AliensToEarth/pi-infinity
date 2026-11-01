@@ -1,3 +1,4 @@
+import { AdaptiveConcurrency } from "./adaptive-concurrency.ts";
 import type { InfinityConfig } from "./config.ts";
 import type { Emitter } from "./events.ts";
 import type { Logger } from "./log.ts";
@@ -81,10 +82,12 @@ export class ThreadService {
   private disposed = false;
   private readonly d: ThreadServiceDeps;
   private readonly now: () => number;
+  private readonly concurrency: AdaptiveConcurrency;
 
   constructor(d: ThreadServiceDeps) {
     this.d = d;
     this.now = d.now ?? Date.now;
+    this.concurrency = new AdaptiveConcurrency(d.config.threads.adaptiveConcurrency);
   }
 
   get transportSetting(): InfinityConfig["threads"]["transport"] {
@@ -137,6 +140,16 @@ export class ThreadService {
       );
     }
 
+    this.concurrency.acquire();
+    try {
+      return await this.spawnReserved(p, io, transport);
+    } catch (err) {
+      this.concurrency.complete("error");
+      throw err;
+    }
+  }
+
+  private async spawnReserved(p: SpawnParams, io: ThreadIO, transport: "interactive" | "subagents"): Promise<{ id: string; text: string }> {
     const id = newThreadId();
     const stack = [...this.d.identity.stack, id];
     const fresh = p.fresh_context === true;
@@ -315,6 +328,7 @@ export class ThreadService {
     }
     child.outcome = outcome;
     rec.status = "closed";
+    this.concurrency.complete(outcome);
     if (!this.disposed) this.d.emitter.emit({ sourceId: rec.id, kind: "child_closed", seq: 0, source, body: parts.join("\n") });
   }
 

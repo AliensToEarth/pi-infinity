@@ -398,6 +398,18 @@ R-H9. Thread agents may spawn further threads (`subagent_agents` lists all threa
 R-H10. Prompt guidance (R-G1) tells the model when to choose fresh context: independent task,
        long parent conversation, instructions can be made self-contained.
 
+R-H11. Optional `threads.adaptiveConcurrency` limits concurrent direct children per parent session,
+       including launches in progress and children finalizing. It is disabled by default. When enabled,
+       `min`, `initial`, and `max` are positive integer limits with min <= initial <= max;
+       `successesToIncrease` is a positive integer, and `decreaseFactor` is strictly between 0 and 1.
+       The initial limit increases by one after that many consecutive successful child completions,
+       up to max. A failed launch or unsuccessful child completion resets the success streak and
+       multiplies the limit by decreaseFactor, rounded down and bounded by min. A rejected admission
+       does not count as a failure. Calls over the current limit fail immediately with guidance to
+       wait and retry; no queue or cancellation is implied. A reduction never stops running children.
+       State is in memory, scoped to one parent session, and reset on restart. Invalid settings are
+       reported and replaced with defaults.
+
 ### 5.6 Sandboxes (P10)
 
 `SandboxBackend` interface: `detect(cwd)`, `create({id, base, root})`, `commitAll(sb,

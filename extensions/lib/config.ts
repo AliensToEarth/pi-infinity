@@ -9,7 +9,19 @@ export interface InfinityConfig {
   events: { maxChars: number; seenCap: number };
   overflow: { maxChars: number; headChars: number; tailChars: number };
   timers: { max: number };
-  threads: { enabled: boolean; maxDepth: number; transport: "auto" | "interactive" | "subagents" };
+  threads: {
+    enabled: boolean;
+    maxDepth: number;
+    transport: "auto" | "interactive" | "subagents";
+    adaptiveConcurrency: {
+      enabled: boolean;
+      min: number;
+      initial: number;
+      max: number;
+      successesToIncrease: number;
+      decreaseFactor: number;
+    };
+  };
   sandbox: { root: string; autoCommit: boolean; backend: "auto" | "git" | "jj" };
 }
 
@@ -19,7 +31,12 @@ export const DEFAULT_CONFIG: InfinityConfig = {
   events: { maxChars: 4000, seenCap: 2000 },
   overflow: { maxChars: 40000, headChars: 6000, tailChars: 2000 },
   timers: { max: 32 },
-  threads: { enabled: true, maxDepth: 4, transport: "auto" },
+  threads: {
+    enabled: true,
+    maxDepth: 4,
+    transport: "auto",
+    adaptiveConcurrency: { enabled: false, min: 1, initial: 2, max: 8, successesToIncrease: 3, decreaseFactor: 0.5 },
+  },
   sandbox: { root: ".pi/sandboxes", autoCommit: true, backend: "auto" },
 };
 
@@ -102,6 +119,17 @@ export function loadConfig(
   for (const file of [join(agentDir, "infinity.json"), join(cwd, ".pi", "infinity.json")]) {
     const json = readJson(file, problems, logger);
     if (json !== undefined) config = mergeConfig(config as unknown as Json, json, "", problems) as unknown as InfinityConfig;
+  }
+  const adaptive = config.threads.adaptiveConcurrency;
+  if (
+    ![adaptive.min, adaptive.initial, adaptive.max, adaptive.successesToIncrease].every((n) => Number.isSafeInteger(n) && n > 0) ||
+    adaptive.min > adaptive.initial ||
+    adaptive.initial > adaptive.max ||
+    adaptive.decreaseFactor <= 0 ||
+    adaptive.decreaseFactor >= 1
+  ) {
+    problems.push("threads.adaptiveConcurrency: invalid limits or calibration; using defaults");
+    config.threads.adaptiveConcurrency = structuredClone(DEFAULT_CONFIG.threads.adaptiveConcurrency);
   }
   return { config, problems };
 }
