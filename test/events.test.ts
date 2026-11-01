@@ -45,21 +45,11 @@ test("R-E2 large bodies are spilled with head, tail and path", () => {
   assert.ok(msg.content.endsWith("Z".repeat(100)));
 });
 
-test("R-E2 spill is idempotent on already truncated text", () => {
-  const first = spillIfLarge(
-    "x".repeat(500),
-    mkdtempSync(join(tmpdir(), "pi-inf-sp-")),
-    { maxChars: 100, headChars: 40, tailChars: 20 },
-    () => {},
-  );
-  assert.ok(first.path);
-  const second = spillIfLarge(
-    first.text + "y".repeat(500),
-    "/nonexistent-dir-never-used",
-    { maxChars: 100, headChars: 40, tailChars: 20 },
-    () => {},
-  );
-  assert.equal(second.path, undefined);
+test("R-E2 an embedded spill marker cannot bypass the size limit", () => {
+  const body = SPILL_MARKER + "x".repeat(500);
+  const result = spillIfLarge(body, mkdtempSync(join(tmpdir(), "pi-inf-sp-")), { maxChars: 100, headChars: 40, tailChars: 20 }, () => {});
+  assert.ok(result.path);
+  assert.equal(readFileSync(result.path, "utf8"), body);
 });
 
 test("R-E2 spill write failure still truncates and reports", () => {

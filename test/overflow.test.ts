@@ -40,10 +40,11 @@ test("R-O2 non-text parts are kept and several text parts are summed", () => {
   assert.equal(out[1], img);
 });
 
-test("R-O3 already truncated content is left alone", () => {
+test("R-O3 an embedded spill marker cannot bypass the guard", () => {
   const text = `head\n${SPILL_MARKER}: 9999 chars total]\n` + "x".repeat(2000);
-  assert.equal(
-    guardContent([{ type: "text", text }], tmpdir(), limits, () => {}),
-    undefined,
-  );
+  const out = guardContent([{ type: "text", text }], mkdtempSync(join(tmpdir(), "pi-inf-ov-")), limits, () => {});
+  assert.ok(out);
+  const path = /saved to (\S+);/.exec((out[0] as { text: string }).text)?.[1];
+  assert.ok(path);
+  assert.equal(readFileSync(path, "utf8"), text);
 });

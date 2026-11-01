@@ -147,7 +147,7 @@ npm install
 | `sleep_until_event` | Yield with nothing scheduled and wake on any event or user message. |
 | `timer_cancel` | Cancel timers. |
 | `spawn_thread` | Child thread in a tmux pane. `child_of` stack check, `fresh_context`, `sandbox`. |
-| `send_message_to_child` | Message a direct child, or resume it. |
+| `send_message_to_child` | Message a running direct child. |
 | `squash_sandbox` | Merge a child's sandbox into the caller's tree. |
 | `report_to_parent` | Thread sessions only. Intermediate report. |
 | `close_thread` | Thread sessions only. Final report, ends the session. |
@@ -222,7 +222,7 @@ pi-infinity picks the transport from the tools that are installed. `threads.tran
 | Context | Fresh or forked | Fresh only, `fresh_context: true` is required |
 | Reports while running | Yes, `report_to_parent` | No |
 | Final result | `close_thread` report, or the exit if it was skipped | The child's last message |
-| `send_message_to_child`, resume | Yes | No, spawn a new thread |
+| `send_message_to_child` | Running children only | No, spawn a new thread |
 | Nested threads | Yes, up to depth 4 | No, children have built-in tools only |
 | Sandboxes, squash, prune | Yes | Yes |
 | Session ends | The pane keeps running until it finishes | Running children are killed, sandboxes stay |

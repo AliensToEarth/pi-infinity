@@ -207,8 +207,8 @@ original_args: <one line JSON, max 300 chars>
 R-E1. `eventId` is `<source id>:<kind>:<seq>`. The emitter keeps a bounded seen-set
       (`events.seenCap`) and drops a second emit with the same id. This makes delivery
       idempotent like Infinity's processed-id set.
-R-E2. Body is capped at `events.maxChars`. Longer bodies are written to
-      `spill/<hash>.txt` and replaced by head, tail and the file path.
+R-E2. Bodies longer than `events.maxChars` are written to `spill/<hash>.txt` and
+      replaced by head, tail and the file path, even if they contain the spill marker.
 R-E3. Delivery is always `steer` with `triggerTurn: true`, which is the same path
       pi-interactive-subagents uses for results. If a user message is pending the event
       queues behind it (interruptible by construction).
@@ -309,7 +309,7 @@ R-O1. `tool_result` handler for every tool except `read`. If the summed text len
       `headChars`, a marker line with total size and the path, last `tailChars`, plus the
       sentence telling the model to use `read` with offset and limit on that path.
 R-O2. Error results are processed the same way. Non-text content passes through unchanged.
-R-O3. Idempotent: content that already contains the marker is not spilled again.
+R-O3. A spill marker in tool output does not exempt oversized content from the guard.
 
 ### 5.5 Threads (P6, P7, P14)
 

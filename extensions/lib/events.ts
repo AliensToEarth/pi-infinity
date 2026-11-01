@@ -87,7 +87,7 @@ export function spillIfLarge(
   limits: { maxChars: number; headChars: number; tailChars: number },
   onError: (err: unknown) => void,
 ): SpillResult {
-  if (text.length <= limits.maxChars || text.includes(SPILL_MARKER)) return { text };
+  if (text.length <= limits.maxChars) return { text };
   const hash = createHash("sha1").update(text).digest("hex").slice(0, 12);
   const path = join(spillDir, `${hash}.txt`);
   let saved = true;

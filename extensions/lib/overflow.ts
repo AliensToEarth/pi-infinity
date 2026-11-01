@@ -1,4 +1,4 @@
-import { SPILL_MARKER, spillIfLarge } from "./events.ts";
+import { spillIfLarge } from "./events.ts";
 
 export interface TextPart {
   type: "text";
@@ -28,7 +28,6 @@ export function guardContent(
   const total = texts.reduce((n, p) => n + p.text.length, 0);
   if (total <= limits.maxChars) return undefined;
   const joined = texts.map((p) => p.text).join("\n");
-  if (joined.includes(SPILL_MARKER)) return undefined;
   const spilled = spillIfLarge(joined, spillDir, limits, onError);
   const others = content.filter((p) => !isText(p));
   return [{ type: "text", text: spilled.text }, ...others];
