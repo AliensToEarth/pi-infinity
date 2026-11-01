@@ -162,6 +162,26 @@ test("R-X4 an error outcome and a throwing call both settle as errors and still 
   assert.equal(b.calls.at(-1), "unregister thread-t-000004");
 });
 
+test("R-X4 a synchronous tool failure unregisters the agent before propagating", () => {
+  const { calls, registered, registry } = registryCalls();
+  assert.throws(
+    () =>
+      launchViaSubagents({
+        registry,
+        executeTool: () => {
+          throw new Error("synchronous failure");
+        },
+        id: "t-000005",
+        task: "x",
+        systemPrompt: "s",
+        promptFile: "f",
+      }),
+    /synchronous failure/,
+  );
+  assert.deepEqual(calls, ["register thread-t-000005", "unregister thread-t-000005"]);
+  assert.equal(registered.size, 0);
+});
+
 test("R-X9 the subagents task frame names built-in tools and the final report, and has no close_thread procedure", () => {
   const t = frameTask({ id: "t-1a2b3c", stack: ["root", "t-1a2b3c"], fresh: true, instructions: "do X", transport: "subagents" });
   assert.match(t, /INSIDE thread t-1a2b3c, started by root/);

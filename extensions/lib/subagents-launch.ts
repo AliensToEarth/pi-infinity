@@ -53,8 +53,18 @@ export function launchViaSubagents(i: LaunchInput): DetachedLaunch {
   });
   const controller = new AbortController();
   const args = { agent: name, task: i.task, ...(i.cwd ? { cwd: i.cwd } : {}) };
-  const done = i
-    .executeTool("subagent", args, { signal: controller.signal })
+  let call: ReturnType<ExecuteTool>;
+  try {
+    call = i.executeTool("subagent", args, { signal: controller.signal });
+  } catch (err) {
+    try {
+      i.registry.unregisterAgent(name);
+    } catch (cleanupError) {
+      throw new AggregateError([err, cleanupError], "subagent call and agent cleanup failed");
+    }
+    throw err;
+  }
+  const done = call
     .then((outcome) => ({
       output: outcome.result.content
         .filter((p) => p.type === "text")
