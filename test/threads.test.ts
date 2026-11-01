@@ -109,6 +109,19 @@ test("R-H5 inbox watcher delivers whole lines once and waits for partial lines",
   );
 });
 
+test("R-H5 inbox watcher preserves UTF-8 split across reads", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  const got: InboxLine[] = [];
+  const w = new InboxWatcher({ file, onLine: (line) => got.push(line), logger: memoryLogger() });
+  const bytes = Buffer.from(JSON.stringify({ type: "report", seq: 0, text: "hello 🌍", at: 1 }) + "\n");
+  const split = bytes.indexOf(Buffer.from("🌍")) + 2;
+  writeFileSync(file, bytes.subarray(0, split));
+  w.drain();
+  writeFileSync(file, bytes.subarray(split), { flag: "a" });
+  w.drain();
+  assert.equal(got[0]?.text, "hello 🌍");
+});
+
 test("R-H5 bad inbox lines are logged, not thrown", () => {
   const dir = tmp("pi-inf-ib-");
   const file = join(dir, "s.reports.jsonl");

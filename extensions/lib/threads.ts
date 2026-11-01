@@ -14,6 +14,7 @@ import {
   type FSWatcher,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import type { Logger } from "./log.ts";
 
 export const ROOT_ID = "root";
@@ -224,6 +225,7 @@ export interface InboxWatcherOptions {
 export class InboxWatcher {
   private offset = 0;
   private carry = "";
+  private readonly decoder = new StringDecoder("utf8");
   private watcher?: FSWatcher;
   private timer?: ReturnType<typeof setInterval>;
   private readonly o: InboxWatcherOptions;
@@ -265,14 +267,20 @@ export class InboxWatcher {
     if (size <= this.offset) return;
     const len = size - this.offset;
     const buf = Buffer.alloc(len);
-    const fd = openSync(this.o.file, "r");
+    let bytesRead: number;
     try {
-      readSync(fd, buf, 0, len, this.offset);
-    } finally {
-      closeSync(fd);
+      const fd = openSync(this.o.file, "r");
+      try {
+        bytesRead = readSync(fd, buf, 0, len, this.offset);
+      } finally {
+        closeSync(fd);
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") this.o.logger.error("threads.inbox", err);
+      return;
     }
-    this.offset = size;
-    const text = this.carry + buf.toString("utf8");
+    this.offset += bytesRead;
+    const text = this.carry + this.decoder.write(buf.subarray(0, bytesRead));
     const parts = text.split("\n");
     this.carry = parts.pop() ?? "";
     for (const part of parts) {
