@@ -193,7 +193,8 @@ writes to a target outside it. Logs are written by pi outside the sandbox.
 
 This reduces accidental writes, not a security guarantee. Reads and network access remain
 allowed, other processes may be contacted, and all files within `cwd` remain writable.
-Choose a narrow directory; `/` provides no useful write restriction. Some tools require
+Hard links within `cwd` can refer to the same data as files outside it. Choose a narrow
+directory; `/` provides no useful write restriction. Some tools require
 writes to caches or temporary directories outside `cwd` and may fail. macOS
 `sandbox-exec` is deprecated and may disappear or change in future releases. Git worktrees
 and jj workspaces are separate checkout isolation, not process security boundaries.
