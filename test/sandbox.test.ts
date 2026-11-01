@@ -100,6 +100,41 @@ test("R-S1 create refuses an id whose branch or path already exists", async (t) 
   await assert.rejects(b.create({ cwd: repo, id: "occupied" }), /already exists/);
 });
 
+test("R-S7 failed worktree add preserves a concurrently created worktree and branch", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial commit");
+  const bin = tempDir(t);
+  const realGit = (await exec("which", ["git"], { encoding: "utf8" })).stdout.trim();
+  const wrapper = join(bin, "git");
+  writeFileSync(
+    wrapper,
+    '#!/bin/sh\nif [ "$1" = worktree ] && [ "$2" = add ]; then\n  "$REAL_GIT" "$@" || exit $?\n  printf "concurrent work\\n" > "$5/concurrent.txt"\nfi\nexec "$REAL_GIT" "$@"\n',
+  );
+  chmodSync(wrapper, 0o755);
+  const b = new GitSandbox(memoryLogger(), { ...GIT_ENV, PATH: `${bin}:${process.env.PATH}`, REAL_GIT: realGit });
+  await assert.rejects(b.create({ cwd: repo, id: "race" }), /failed/);
+  const path = join(repo, ".pi", "sandboxes", "race");
+  assert.equal(readFileSync(join(path, "concurrent.txt"), "utf8"), "concurrent work\n");
+  assert.equal((await xgit(path, ["branch", "--show-current"])).trim(), "sandbox-race");
+});
+
+test("R-S7 failed worktree add preserves a concurrently created branch at base", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial commit");
+  const bin = tempDir(t);
+  const realGit = (await exec("which", ["git"], { encoding: "utf8" })).stdout.trim();
+  const wrapper = join(bin, "git");
+  writeFileSync(
+    wrapper,
+    '#!/bin/sh\nif [ "$1" = worktree ] && [ "$2" = add ]; then\n  "$REAL_GIT" branch "$4" "$6" || exit $?\nfi\nexec "$REAL_GIT" "$@"\n',
+  );
+  chmodSync(wrapper, 0o755);
+  const b = new GitSandbox(memoryLogger(), { ...GIT_ENV, PATH: `${bin}:${process.env.PATH}`, REAL_GIT: realGit });
+  await assert.rejects(b.create({ cwd: repo, id: "branch-race" }), /failed/);
+  assert.equal((await xgit(repo, ["rev-parse", "sandbox-branch-race"])).trim(), (await xgit(repo, ["rev-parse", "HEAD"])).trim());
+  assert.equal(existsSync(join(repo, ".pi", "sandboxes", "branch-race")), false);
+});
+
 test("R-S2 the sandbox root is excluded once even after repeated creates", async (t) => {
   const repo = await initRepo(t);
   await commitFile(repo, "file.txt", "base\n", "initial commit");

@@ -192,6 +192,7 @@ function zoneFormatter(timeZone: string): Intl.DateTimeFormat {
       timeZone,
       hourCycle: "h23",
       year: "numeric",
+      era: "short",
       month: "2-digit",
       day: "2-digit",
       hour: "2-digit",
@@ -220,7 +221,7 @@ function wallOf(timeZone: string, atUtcMs: number): WallTime {
     return Number(part.value);
   };
   return {
-    year: num("year"),
+    year: parts.find((p) => p.type === "era")?.value === "BC" ? 1 - num("year") : num("year"),
     month: num("month"),
     day: num("day"),
     hour: num("hour"),

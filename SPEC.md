@@ -326,7 +326,8 @@ R-T4. Timers are durable. Each set, fire and cancel is appended with
 R-T5. Delays above 2^31-1 ms are chained.
 R-T6. `sleep_until` resolves the wall clock time in the given IANA zone with `Intl`. It must
       handle DST gaps (nonexistent local time moves forward) and overlaps (earlier instant).
-      An invalid zone or date is an error result.
+      Four-digit dates use astronomical year numbering, including year 0000. An invalid
+      zone or date is an error result.
 R-T7. At most `timers.max` pending timers.
 
 ### 5.4 Oversized result guard (P8)
@@ -397,7 +398,9 @@ R-H7a. Interactive transport failures returned in the nested tool's `details.err
        even when `executeTool` reports `isError: false`; propagate them to the caller. A failed
        launch must not leave a running thread record or sandbox.
 R-H8. Thread files and watchers are removed when the child closes or the parent session shuts
-      down (best effort, logged).
+      down (best effort, logged). A launch that resolves after shutdown is not registered and must
+      not recreate its thread file or watcher; its spawn call fails. A detached launch that starts
+      during shutdown is aborted. Any sandbox created before shutdown is left intact.
 R-H9. Thread agents may spawn further threads (`subagent_agents` lists all thread agents and
       aliases). When the requested mode would use the caller's own agent name, launch the
       equivalent alias to satisfy the interactive transport's self-spawn restriction. Both
@@ -458,6 +461,8 @@ R-S7. After a successful squash the worktree is removed and the branch is kept. 
       its repository pointer; if verification fails, it leaves both the directory and the
       registered workspace intact. Failed creation cleanup applies the same checks and never
       deletes an unverified directory, including one created concurrently by another process.
+      A failed git worktree add does not establish ownership of its destination or branch;
+      failed creation therefore leaves both untouched rather than deleting a concurrent worktree.
 R-S9. When the subagent process of a thread ends without `close_thread`, the parent closes the
       thread itself (commit, diff stat, `child_closed` event). When `close_thread` already
       ran, the generic subagent exit message is shortened to one line.

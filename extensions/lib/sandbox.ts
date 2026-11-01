@@ -177,13 +177,10 @@ export class GitSandbox implements SandboxBackend {
 
     this.excludeRoot(commonDir, root);
     mkdirSync(dirname(path), { recursive: true });
-    try {
-      await git(cwd, ["worktree", "add", "-b", branch, path, base], this.env);
-    } catch (err) {
-      // Never leave a half-created worktree or branch behind.
-      await this.cleanupFailedCreate(mainRoot, branch, base, path);
-      throw err;
-    }
+    // A failed add does not prove ownership of either the path or the branch:
+    // another process may have created them after our probes. Leave any partial
+    // artifacts for manual recovery instead of risking deletion of user work.
+    await git(cwd, ["worktree", "add", "-b", branch, path, base], this.env);
     // Lets list() tell an untouched branch (tip equals base) from one that was merged.
     await git(mainRoot, ["config", `branch.${branch}.${BASE_KEY}`, base], this.env);
     return { id, branch, path, base, repoRoot: mainRoot };
@@ -308,32 +305,6 @@ export class GitSandbox implements SandboxBackend {
     if (content.split("\n").includes(line)) return;
     const sep = content === "" || content.endsWith("\n") ? "" : "\n";
     writeFileSync(excludePath, `${content}${sep}${line}\n`);
-  }
-
-  // Best effort: the original failure is what the caller needs to see.
-  private async cleanupFailedCreate(mainRoot: string, branch: string, base: string, path: string): Promise<void> {
-    if (existsSync(path)) {
-      try {
-        await git(mainRoot, ["worktree", "remove", "--force", path], this.env);
-      } catch (err) {
-        this.logger.error("sandbox", err);
-      }
-    }
-    try {
-      await git(mainRoot, ["worktree", "prune"], this.env);
-    } catch (err) {
-      this.logger.error("sandbox", err);
-    }
-    const probe = await run(mainRoot, ["rev-parse", "--verify", `refs/heads/${branch}`], this.env);
-    // Only delete the branch our own -b just created: it must exist and still
-    // point at base, so a branch somebody else raced in is never destroyed.
-    if (probe.code === 0 && probe.stdout.trim() === base) {
-      try {
-        await git(mainRoot, ["branch", "-D", branch], this.env);
-      } catch (err) {
-        this.logger.error("sandbox", err);
-      }
-    }
   }
 
   private async commit(dir: string, msg: string): Promise<string> {

@@ -347,6 +347,8 @@ test("R-T6 converts wall clock times in fixed and DST zones", () => {
     ["2026-06-21", "12:00", "Europe/London", "2026-06-21T11:00:00.000Z"],
     ["2026-01-15", "12:00", "Europe/London", "2026-01-15T12:00:00.000Z"],
     ["2024-02-29", "00:00", "UTC", "2024-02-29T00:00:00.000Z"],
+    ["0000-01-01", "12:00", "UTC", "0000-01-01T12:00:00.000Z"],
+    ["0001-01-01", "00:00", "UTC", "0001-01-01T00:00:00.000Z"],
     ["2026-07-04", "14:45", "Asia/Kolkata", "2026-07-04T09:15:00.000Z"],
     ["2026-07-04", "12:34:56", "UTC", "2026-07-04T12:34:56.000Z"],
     ["2026-01-15", "09:00", "Pacific/Auckland", "2026-01-14T20:00:00.000Z"],
@@ -362,6 +364,7 @@ test("R-T6 a spring forward gap moves forward by the gap", () => {
     ["2026-03-08", "02:30", "America/New_York", "2026-03-08T07:30:00.000Z"],
     ["2026-03-29", "01:30", "Europe/London", "2026-03-29T01:30:00.000Z"],
     ["2026-09-27", "02:30", "Pacific/Auckland", "2026-09-26T14:30:00.000Z"],
+    ["2011-12-30", "12:00", "Pacific/Apia", "2011-12-30T22:00:00.000Z"],
   ];
   for (const [date, time, zone, want] of cases) {
     assert.equal(iso(zonedTimeToUtcMs(date, time, zone)), want, `${date} ${time} ${zone}`);
