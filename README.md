@@ -71,9 +71,11 @@ job j1 "npm" finished: exited (exit code 1, 42s)
 ...
 ```
 
-The emitter guarantees three things for every event:
+The emitter handles events as follows:
 
-* **Delivered once.** Events carry a stable id, and a second event with the same id is dropped.
+* **Recoverable delivery.** Events are recorded before sending and replayed after a restart if
+  absent from the active session transcript. A persisted message acknowledges delivery to the
+  transcript, not that the model processed it; a crash can still cause a duplicate.
 * **Bounded.** A body over 4000 characters is saved to a file and replaced by its head, tail and
   the file path, so one noisy event cannot flood the context.
 * **Interruptible.** Events are steer messages. If you type something while one is pending, your
@@ -224,6 +226,17 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
   session the changes are only staged (git) or left in the working-copy change (jj), and you
   confirm first. Inside a sandboxed thread the result is committed. A conflict aborts the
   squash and leaves both sides unchanged.
+* **Dependencies.** `depends_on: ["t-..."]` requires direct children to have closed without
+  a known failure. Unmet dependencies reject the spawn; they are not queued. Interactive child
+  completion does not prove its task succeeded, so inspect its report first. Dependencies are
+  session-local.
+* **Structured reports.** Interactive children can call `report_to_parent` or `close_thread`
+  with `structured: { summary, files?, tests?, blockers? }` instead of `report`. A pi-subagents
+  child can use the same JSON object as its final message. Existing plain-text reports still work.
+* **Adaptive concurrency.** Opt in with `threads.adaptiveConcurrency.enabled: true`. Limits
+  are session-local: they increase after consecutive successful completions and decrease after
+  failures. When full, spawn rejects immediately rather than queueing. Configure `min`, `initial`,
+  `max`, `successesToIncrease`, and `decreaseFactor` to suit your provider and workload.
 * **Depth.** On pi-interactive-subagents threads can spawn threads, down to four levels.
 
 ### Two transports
