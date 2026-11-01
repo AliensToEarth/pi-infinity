@@ -282,7 +282,8 @@ export class JobManager {
     this.signal(pid, "SIGTERM");
     if (!st.killTimer) {
       st.killTimer = setTimeout(() => {
-        if (!st.exitSeen) this.signal(pid, "SIGKILL");
+        // The shell may have exited while descendants in its group ignored SIGTERM.
+        this.signal(pid, "SIGKILL");
       }, this.deps.killGraceMs ?? 3000);
     }
   }
@@ -378,7 +379,8 @@ export class JobManager {
   private finalize(st: Internal): void {
     if (st.finalized) return;
     st.finalized = true;
-    for (const t of [st.killTimer, st.timeoutTimer, st.closeTimer]) if (t) clearTimeout(t);
+    // A pending group kill must outlive the shell's exit and this job's finalization.
+    for (const t of [st.timeoutTimer, st.closeTimer]) if (t) clearTimeout(t);
     for (const stream of ["stdout", "stderr"] as const) {
       if (st.partial[stream] !== "") {
         const rest = st.partial[stream];

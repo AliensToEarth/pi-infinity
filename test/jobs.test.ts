@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -90,6 +90,29 @@ test("R-J8 SIGKILL follows when SIGTERM is ignored", async () => {
   mgr.cancel(job.id);
   await until(() => exits(events).length > 0, 4000);
   assert.equal(mgr.get(job.id)?.status, "cancelled");
+});
+
+test("R-J8 escalation kills a descendant that ignores TERM after the shell exits", async () => {
+  const { mgr, dir } = setup();
+  const marker = join(dir, "escaped");
+  const script = `process.on('SIGTERM', () => {}); console.log('ready'); setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marker)}, 'escaped'), 1200)`;
+  const job = mgr.start({ command: `node -e ${JSON.stringify(script)} & wait`, cwd: tmpdir() });
+  try {
+    await until(() => mgr.output(job.id, {}).text.includes("ready"));
+    mgr.cancel(job.id);
+    await until(() => job.status !== "running");
+    assert.equal(job.signal, "SIGTERM", "the shell must exit before escalation");
+    await new Promise((r) => setTimeout(r, 1600));
+    assert.equal(existsSync(marker), false, "descendant survived the group cancellation");
+  } finally {
+    if (job.pid !== undefined) {
+      try {
+        process.kill(-job.pid, "SIGKILL");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
+      }
+    }
+  }
 });
 
 test("R-J8 unknown id is an error value for the adapter to report", () => {

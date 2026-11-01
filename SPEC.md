@@ -248,7 +248,8 @@ R-J7. Delivery mode. By default (threaded in Infinity terms) matches are rate li
       noisy stream costs a bounded amount of context. With `associative: true` the rate limit
       is off and every batch is delivered, for streams where each line belongs in the
       conversation. Batching and the body size cap apply in both modes.
-R-J8. `bg_cancel` sends SIGTERM to the group, waits 3 s, sends SIGKILL if still alive. It
+R-J8. `bg_cancel` sends SIGTERM to the group, waits 3 s, then sends SIGKILL to the group,
+      even if its shell has already exited, to stop descendants that ignored SIGTERM. It
       returns without waiting for the exit. A second cancel on the same job is a no-op that
       reports the current state. Cancelling an unknown id is an error result, not a throw.
 R-J9. On `session_shutdown` every running job is cancelled with the same procedure, without
