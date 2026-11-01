@@ -23,6 +23,7 @@ case "$mode" in subagents | interactive) ;; *)
 esac
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+source "$repo_root/scripts/smoke-cleanup.sh"
 user_dir="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
 model="${SMOKE_MODEL:-openrouter/z-ai/glm-5.3}"
 limit="${SMOKE_TIMEOUT:-150}"
@@ -34,7 +35,7 @@ mkdir -p "$agent_dir/extensions" "$agent_dir/agents" "$project"
 
 cleanup() {
   tmux kill-session -t "$session" 2>/dev/null || true
-  rm -rf "$work"
+  smoke_remove_work "$work"
 }
 trap cleanup EXIT
 

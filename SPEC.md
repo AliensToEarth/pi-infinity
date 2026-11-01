@@ -652,6 +652,8 @@ Sprints 8 to 10, second transport
   * the same scenario on pi-interactive-subagents with the new code still passes
 * `scripts/smoke.sh subagents|interactive` automates the sandbox scenario for both transports
   and is exposed as `npm run smoke:*`. It is opt in because it needs a model.
+* R-D2. Smoke cleanup retries temporary directory removal after stopping its own tmux session,
+  to tolerate late child writes. Persistent removal failures are reported and fail the run.
 * Finding: `ctx.executeTool` keeps working after the spawning tool call returned, as long as
   the nested call carries its own `AbortController`. No fallback runner was needed.
 * Finding: pi-subagents drops tools it does not know, so children there cannot get
