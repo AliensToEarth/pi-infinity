@@ -51,6 +51,7 @@ export interface SpawnParams {
   fresh_context?: boolean;
   model?: string;
   sandbox?: boolean;
+  depends_on?: string[];
 }
 
 export interface ThreadServiceDeps {
@@ -72,6 +73,7 @@ interface Child {
   callId?: string;
   abort?: () => void;
   closing?: boolean;
+  outcome?: "ok" | "error";
 }
 
 export class ThreadService {
@@ -118,6 +120,14 @@ export class ThreadService {
     const check = checkChildOf(this.d.identity.stack, p.child_of, this.d.config.threads.maxDepth);
     if (!check.ok) throw new Error(check.message);
     if (p.instructions.trim() === "") throw new Error("instructions must not be empty");
+    const dependencies = p.depends_on ?? [];
+    if (new Set(dependencies).size !== dependencies.length) throw new Error("depends_on must not contain duplicate thread IDs");
+    for (const id of dependencies) {
+      const child = this.children.get(id);
+      if (!child || child.record.parentId !== this.d.identity.id) throw new Error(`Dependency ${id} is not a known direct child`);
+      if (child.record.status !== "closed") throw new Error(`Dependency ${id} is still running or finalizing; wait for its close event`);
+      if (child.outcome !== "ok") throw new Error(`Dependency ${id} did not complete successfully`);
+    }
     const transport = io.transport ?? "interactive";
     if (transport === "none") throw new Error(NO_TRANSPORT_MESSAGE);
     if (transport === "subagents" && p.fresh_context !== true) {
@@ -294,6 +304,7 @@ export class ThreadService {
         );
       } catch (err) {
         this.d.logger.error("threads.close", err);
+        outcome = "error";
         parts.push(`Could not read the sandbox state (${(err as Error).message}). Branch ${rec.sandbox.branch} is intact.`);
       }
     }
@@ -302,6 +313,7 @@ export class ThreadService {
     } catch (err) {
       this.d.logger.error("threads.close", err);
     }
+    child.outcome = outcome;
     rec.status = "closed";
     if (!this.disposed) this.d.emitter.emit({ sourceId: rec.id, kind: "child_closed", seq: 0, source, body: parts.join("\n") });
   }

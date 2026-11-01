@@ -369,6 +369,13 @@ R-H6a. Reports may instead use `structured: {summary, files?, tests?, blockers?}
        reports are serialized in the existing text field and rendered concisely for the parent.
        Children using the blocking transport may return the same JSON object as their final
        message. Unrecognized or invalid JSON remains ordinary text, preserving legacy reports.
+R-H6b. `spawn_thread` accepts optional `depends_on`, an array of distinct direct child IDs.
+       Before creating a sandbox or launching, it rejects unknown, unfinished, or known failed
+       prerequisites. Detached transport errors and sandbox finalization failures are failures.
+       Interactive completion, including an implicit process exit, has an unknown outcome and
+       counts as completion only, not verified success; callers must inspect its report. This is a
+       guard, not a queue: the caller waits for completion events and retries. Results remain
+       session-local and are not restored after restart.
 R-H7. `send_message_to_child` accepts only running direct children recorded in the parent's own
       thread registry. It calls `subagent_message` with the thread's name. Threads that have begun
       closing or are closed cannot receive messages; tell the caller to spawn a new thread.

@@ -93,7 +93,7 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
     description:
       'Start a child thread (a sub-agent in its own pane) for work that can run in parallel, and return at once. Pass child_of: your own thread stack, root first (in the main session that is ["root"]); a mismatch is rejected. ' +
       "fresh_context: true starts the child with an empty history, so write self-contained instructions; use it for independent tasks and when your conversation is long. Otherwise the child inherits your conversation. " +
-      "sandbox: true gives the child its own git worktree and branch. Reports and the close arrive as [infinity event] messages. Never wait for it.",
+      "sandbox: true gives the child its own git worktree and branch. depends_on lists direct children that must have completed without a known failure; interactive completion does not verify success. An unmet dependency rejects the call rather than queueing it. Reports and the close arrive as [infinity event] messages. Never wait for it.",
     promptGuidelines: [
       "Prefer fresh_context threads for independent sub-tasks: a long parent conversation is noise that costs tokens. Put every path and fact the child needs into its instructions.",
       "After spawn_thread, do not poll or guess results. End your turn or work on something independent.",
@@ -104,6 +104,9 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
       fresh_context: Type.Optional(Type.Boolean({ description: "Empty history for the child. Default false" })),
       model: Type.Optional(Type.String({ description: "Model override for the child" })),
       sandbox: Type.Optional(Type.Boolean({ description: "Give the child an isolated git worktree. Needs a git repo" })),
+      depends_on: Type.Optional(
+        Type.Array(Type.String(), { description: "Direct child IDs that must already have completed without a known failure" }),
+      ),
     }),
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
       const out = await svc().spawn(params, ioFor(ctx as unknown as ToolCtx, svc().transportSetting, toolCallId));
