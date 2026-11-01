@@ -590,7 +590,8 @@ R-X3. On the subagents transport `spawn_thread` returns at once. The nested `sub
 R-X4. Per thread, an agent named `thread-<id>` is registered just before the call and
       unregistered when the call settles. Its model is the `model` parameter, else the current
       session model. Its tools are the built-ins. Its system prompt is
-      `agents/blocking/thread-blocking.md`.
+      `agents/blocking/thread-blocking.md`. If the nested tool throws synchronously while
+      starting, unregister the agent before propagating the failure.
 R-X5. `fresh_context` other than `true` is rejected before any side effect, with a message
       that names the reason and says to pass `fresh_context: true` with self-contained
       instructions.
