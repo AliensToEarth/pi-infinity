@@ -314,6 +314,32 @@ test("R-X6 a sandbox is committed and its diff stat listed when the call settles
   assert.match(git(d.repo, "log", "--oneline", `sandbox-${id}`), /thread t-/);
 });
 
+test("R-S5 squash rejects a running or finalizing subagents sandbox", async () => {
+  const d = detached();
+  const { id } = await d.svc.spawn({ instructions: "x", child_of: ["root"], fresh_context: true, sandbox: true }, d.io);
+  const cwd = d.launches[0].cwd as string;
+  writeFileSync(join(cwd, "child.txt"), "hi\n");
+  let confirmations = 0;
+  const io = {
+    ...d.io,
+    confirm: async () => {
+      confirmations++;
+      return true;
+    },
+  };
+  await assert.rejects(d.svc.squash(id, {}, io), /still running or finalizing/);
+  d.resolve({ output: "done", isError: false });
+  await Promise.resolve();
+  assert.equal(d.svc.hasClosed(id), false);
+  await assert.rejects(d.svc.squash(id, {}, io), /still running or finalizing/);
+  assert.equal(confirmations, 0);
+  assert.ok(existsSync(cwd));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(d.svc.hasClosed(id), true);
+  await d.svc.squash(id, {}, io);
+  assert.equal(git(d.repo, "diff", "--cached", "--name-only"), "child.txt");
+});
+
 test("R-X7 messaging a subagents thread fails clearly", async () => {
   const d = detached();
   const { id } = await d.svc.spawn({ instructions: "x", child_of: ["root"], fresh_context: true }, d.io);

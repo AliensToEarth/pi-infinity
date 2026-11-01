@@ -308,6 +308,7 @@ test("R-S5 root squash needs confirmation, stages and does not commit", async ()
   const h = harness();
   const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, h.io);
   writeFileSync(join(h.launches[0].cwd as string, "b.txt"), "x\n");
+  await h.svc.childExited(id);
   await assert.rejects(h.svc.squash(id, {}, h.io), /needs the user to confirm/);
   const withUi = { ...h.io, confirm: async () => true };
   const msg = await h.svc.squash(id, {}, withUi);
@@ -322,6 +323,7 @@ test("R-S5 declined confirmation changes nothing", async () => {
   const h = harness();
   const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, h.io);
   writeFileSync(join(h.launches[0].cwd as string, "b.txt"), "x\n");
+  await h.svc.childExited(id);
   await assert.rejects(h.svc.squash(id, {}, { ...h.io, confirm: async () => false }), /declined/);
   assert.equal(git(h.repo, "diff", "--cached", "--name-only"), "");
 });
@@ -333,6 +335,8 @@ test("R-S6 conflict surfaces the path and leaves the target clean", async () => 
   writeFileSync(join(h.launches[0].cwd as string, "a.txt"), "child a\n");
   writeFileSync(join(h.launches[1].cwd as string, "a.txt"), "child b\n");
   const io = { ...h.io, confirm: async () => true };
+  await h.svc.childExited(a.id);
+  await h.svc.childExited(b.id);
   await h.svc.squash(a.id, { commit: true }, io);
   git(h.repo, "-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@example.org", "commit", "-q", "-m", "take a");
   await assert.rejects(h.svc.squash(b.id, {}, io), /conflicts in: a\.txt/);
@@ -359,6 +363,7 @@ test("R-S7 listing and pruning sandboxes", async () => {
   const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, h.io);
   writeFileSync(join(h.launches[0].cwd as string, "b.txt"), "x\n");
   assert.match(await h.svc.listSandboxes(h.repo), new RegExp(`sandbox-${id}  open`));
+  await h.svc.childExited(id);
   const io = { ...h.io, confirm: async () => true };
   await h.svc.squash(id, {}, io);
   assert.match(await h.svc.pruneSandboxes(io), /refused.*not committed/);

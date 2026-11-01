@@ -70,10 +70,12 @@ interface Child {
   watcher?: InboxWatcher;
   callId?: string;
   abort?: () => void;
+  closing?: boolean;
 }
 
 export class ThreadService {
   private readonly children = new Map<string, Child>();
+  private disposed = false;
   private readonly d: ThreadServiceDeps;
   private readonly now: () => number;
 
@@ -266,8 +268,8 @@ export class ThreadService {
     outcome: "ok" | "error" = "ok",
   ): Promise<void> {
     const rec = child.record;
-    if (rec.status === "closed") return;
-    rec.status = "closed";
+    if (rec.status === "closed" || child.closing) return;
+    child.closing = true;
     child.watcher?.stop();
     const text = line.text?.trim() || "(no report)";
     const parts = [
@@ -293,7 +295,8 @@ export class ThreadService {
     } catch (err) {
       this.d.logger.error("threads.close", err);
     }
-    this.d.emitter.emit({ sourceId: rec.id, kind: "child_closed", seq: 0, source, body: parts.join("\n") });
+    rec.status = "closed";
+    if (!this.disposed) this.d.emitter.emit({ sourceId: rec.id, kind: "child_closed", seq: 0, source, body: parts.join("\n") });
   }
 
   /** R-H5, child side. */
@@ -339,6 +342,8 @@ export class ThreadService {
     }
     const sb = child.record.sandbox;
     if (!sb) throw new Error(`thread ${threadId} was not started with sandbox: true`);
+    if (child.record.status !== "closed")
+      throw new Error(`thread ${threadId} is still running or finalizing; wait for its close event before squashing`);
 
     const backend = child.backend;
     if (!backend) throw new Error(`bug: thread ${threadId} has a sandbox but no backend`);
@@ -407,6 +412,7 @@ export class ThreadService {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const c of this.children.values()) {
       c.watcher?.stop();
       if (c.record.status === "running") {
