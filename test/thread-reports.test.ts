@@ -18,3 +18,14 @@ test("R-H6a validates reports and preserves unrecognized text", () => {
   }
   assert.equal(renderReport("plain report"), "plain report");
 });
+
+test("R-H6a structured reports preserve Unicode and escaped text; malformed or mismatched JSON stays literal", () => {
+  const summary = 'Done: β, ✓, "quoted"\nnext line';
+  const encoded = encodeReport(undefined, { summary, files: ["目录/a.ts", "space name.ts"], blockers: ["one, two"] }, true)!;
+  assert.equal(renderReport(encoded), `${summary}\nFiles: 目录/a.ts, space name.ts\nBlockers: one, two`);
+  for (const text of ['{"summary":', '{"summary":"ok","tests":null}', '[{"summary":"ok"}]', '"plain"', "42"]) {
+    assert.equal(renderReport(text), text);
+  }
+  assert.throws(() => encodeReport("", { summary: "x" }, false), /either/);
+  assert.equal(encodeReport("", undefined, true), "");
+});
