@@ -358,6 +358,23 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
     assert.equal(byId.get("untouched")?.hasWorktree, true);
   });
 
+  t.test("R-S7 moved jj bookmarks and legacy markers cannot be pruned", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const b = backend(env);
+    const sb = await b.create({ cwd: repo, id: "moved" });
+    writeFileSync(join(sb.path, "work.txt"), "work\n");
+    await b.commitAll(sb, "work");
+    assert.equal((await b.squashInto(repo, sb, { commit: true })).ok, true);
+    await b.remove(sb, { keepBranch: true });
+    assert.equal((await b.list(repo))[0]?.merged, true);
+    await xjj(repo, env, ["bookmark", "set", "-B", sb.branch, "-r", "@"]);
+    assert.equal((await b.list(repo))[0]?.merged, false);
+    assert.deepEqual(await b.pruneMerged(repo), []);
+    writeFileSync(join(repo, ".jj", "pi-infinity-squashed.json"), JSON.stringify({ [sb.branch]: repo }));
+    assert.equal((await b.list(repo))[0]?.merged, false);
+    assert.deepEqual(await b.pruneMerged(repo), []);
+  });
+
   t.test("R-S7 pruneMerged deletes merged bookmarks without a workspace", async (t) => {
     const { repo, env } = await initRepo(t, { colocate: false });
     const b = backend(env);

@@ -254,7 +254,8 @@ export class JjSandbox implements SandboxBackend {
       // Empty the target's working-copy change so the next squash starts clean.
       await jj(targetPath, ["new"], this.env);
     }
-    this.recordSquashed(sb, targetPath);
+    const tip = (await jj(targetPath, ["log", "-r", sb.branch, "--no-graph", "-T", 'commit_id ++ "\\n"'], this.env)).trim();
+    this.recordSquashed(sb, tip);
     return { ok: true, commitSha, filesChanged };
   }
 
@@ -310,11 +311,17 @@ export class JjSandbox implements SandboxBackend {
       if (!branch.startsWith(PREFIX) || branch.includes("@")) continue;
       const root = workspaces.get(branch);
       const hasWorktree = root !== undefined && existsSync(root);
+      const recorded = marker[branch];
+      let merged = false;
+      if (recorded !== undefined && /^[0-9a-f]{40,64}$/.test(recorded)) {
+        const tip = await jj(repoRoot, ["log", "-r", branch, "--no-graph", "-T", 'commit_id ++ "\\n"'], this.env);
+        merged = tip.trim() === recorded;
+      }
       infos.push({
         branch,
         id: branch.slice(PREFIX.length),
         path: hasWorktree ? root : undefined,
-        merged: marker[branch] !== undefined,
+        merged,
         hasWorktree,
       });
     }
@@ -410,10 +417,10 @@ export class JjSandbox implements SandboxBackend {
 
   // jj has no equivalent of git config for the squash marker, so merged
   // sandboxes are recorded next to the repo state in the main .jj directory.
-  private recordSquashed(sb: Sandbox, targetPath: string): void {
+  private recordSquashed(sb: Sandbox, tip: string): void {
     const markerPath = join(sb.repoRoot, ".jj", MARKER_NAME);
     const map = readMarker(markerPath, this.logger);
-    map[sb.branch] = targetPath;
+    map[sb.branch] = tip;
     writeFileSync(markerPath, `${JSON.stringify(map, null, 2)}\n`);
   }
 
