@@ -249,6 +249,15 @@ test("R-H6 child side tools write to the inbox and refuse in the root session", 
   assert.throws(() => mk({}).close(), /only inside a thread/);
 });
 
+test("R-H7 closed threads reject messaging instead of silently losing the message", async () => {
+  const h = harness();
+  const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"] }, h.io);
+  await h.svc.childExited(id);
+  await assert.rejects(h.svc.sendToChild(id, "hello", h.io), /closed and cannot be resumed/);
+  assert.deepEqual(h.messages, []);
+  h.svc.dispose();
+});
+
 test("R-H7 send_message_to_child accepts only direct children", async () => {
   const h = harness();
   const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"] }, h.io);

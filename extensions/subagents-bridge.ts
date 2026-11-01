@@ -9,7 +9,7 @@ interface SubagentsGlobal {
   registerToolExtension?: (name: string, path: string) => void;
 }
 
-const REQUIRED_AGENTS = ["thread-fresh", "thread-fork"];
+const REQUIRED_AGENTS = ["thread-fresh", "thread-fork", "thread-fresh-nested", "thread-fork-nested"];
 
 /**
  * R-H2, R-H9. Child processes start with --no-extensions and an allowlist, so every tool

@@ -28,10 +28,17 @@ function textOf(result: { content: Array<{ type: string; text?: string }> }): st
     .trim();
 }
 
+export function interactiveAgentName(agent: string, caller?: string): string {
+  return agent === caller ? `${agent}-nested` : agent;
+}
+
 function ioFor(ctx: ToolCtx, setting: TransportSetting, callId?: string): ThreadIO {
   const run = async (name: string, args: unknown) => {
     const outcome = await ctx.executeTool(name, args);
-    if (outcome.isError) throw new Error(`${name} failed: ${textOf(outcome.result)}`);
+    const details = outcome.result.details as { error?: unknown } | undefined;
+    if (outcome.isError || (typeof details?.error === "string" && details.error)) {
+      throw new Error(`${name} failed: ${typeof details?.error === "string" && details.error ? details.error : textOf(outcome.result)}`);
+    }
     return outcome.result;
   };
   const registry = readAgentRegistry();
@@ -61,7 +68,7 @@ function ioFor(ctx: ToolCtx, setting: TransportSetting, callId?: string): Thread
     callId,
     launch: async (a) => {
       const result = await run("subagent", {
-        agent: a.agent,
+        agent: interactiveAgentName(a.agent, process.env.PI_SUBAGENT_AGENT),
         task: a.task,
         name: a.name,
         ...(a.cwd ? { cwd: a.cwd } : {}),
@@ -107,7 +114,7 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
     name: "send_message_to_child",
     label: "Message child",
     description:
-      "Send a message to one of your direct child threads. It is typed into the running child, or resumes the child if it has finished. Returns at once.",
+      "Send a message to one of your running direct child threads. Returns at once. Closed threads cannot be resumed; spawn a new thread instead.",
     parameters: Type.Object({ thread_id: Type.String(), message: Type.String() }),
     async execute(toolCallId, params, _s, _u, ctx) {
       await svc().sendToChild(params.thread_id, params.message, ioFor(ctx as unknown as ToolCtx, svc().transportSetting, toolCallId));

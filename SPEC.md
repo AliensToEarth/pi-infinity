@@ -346,12 +346,18 @@ R-H5. `report_to_parent` appends one JSON line `{type:"report", seq, text, at}`.
 R-H6. `close_thread` appends `{type:"closed", report?}` and returns `terminate: true`. The
       parent emits `child_closed` with the report. The thread session then exits through
       the subagent auto-exit path.
-R-H7. `send_message_to_child` accepts only direct children recorded in the parent's own
-      thread registry. It calls `subagent_message` with the thread's name.
+R-H7. `send_message_to_child` accepts only running direct children recorded in the parent's own
+      thread registry. It calls `subagent_message` with the thread's name. Closed threads cannot
+      be resumed via this tool; reject the message and tell the caller to spawn a new thread.
+R-H7a. Interactive transport failures returned in the nested tool's `details.error` are failures
+       even when `executeTool` reports `isError: false`; propagate them to the caller. A failed
+       launch must not leave a running thread record or sandbox.
 R-H8. Thread files and watchers are removed when the child closes or the parent session shuts
       down (best effort, logged).
-R-H9. Thread agents may spawn further threads (`subagent_agents` lists both thread agents),
-      so stacks can be deeper than two. Depth is capped at 4.
+R-H9. Thread agents may spawn further threads (`subagent_agents` lists all thread agents and
+      aliases). When the requested mode would use the caller's own agent name, launch the
+      equivalent alias to satisfy the interactive transport's self-spawn restriction. Both
+      fresh and fork modes remain available at every permitted depth. Depth is capped at 4.
 R-H10. Prompt guidance (R-G1) tells the model when to choose fresh context: independent task,
        long parent conversation, instructions can be made self-contained.
 

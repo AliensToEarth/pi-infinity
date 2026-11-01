@@ -2,7 +2,7 @@
 name: thread-fresh
 description: Infinity-style worker thread that starts with an empty context
 tools: read, write, edit, bash, grep, find, ls, web_search, web_fetch, bg_run, bg_output, bg_cancel, bg_list, sleep, sleep_until, sleep_until_event, timer_cancel, spawn_thread, send_message_to_child, report_to_parent, close_thread, squash_sandbox
-subagent_agents: thread-fresh, thread-fork
+subagent_agents: thread-fresh, thread-fork, thread-fresh-nested, thread-fork-nested
 session-mode: standalone
 system-prompt: append
 auto-exit: true

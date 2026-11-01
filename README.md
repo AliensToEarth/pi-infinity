@@ -196,7 +196,9 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
   child inherits its parent's plans, including pending `spawn_thread` calls. The check rejects
   those so the child does not run them again.
 * **Reports and closing.** A child sends `report_to_parent` for intermediate results and ends
-  with `close_thread`. A child that exits without closing is closed for it.
+  with `close_thread`. A child that exits without closing is closed for it. You can message a
+  running child with `send_message_to_child`, but closed threads cannot be resumed; spawn a new
+  thread for further work.
 * **Sandboxes.** `sandbox: true` gives the child a checkout under `.pi/sandboxes/<id>` on a
   `sandbox-<id>` branch (git worktree) or bookmark (jj workspace). The backend is chosen
   automatically and jj wins when the repository uses it. When the child closes, its work is

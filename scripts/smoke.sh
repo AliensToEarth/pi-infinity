@@ -62,7 +62,7 @@ else
   src="${PI_INTERACTIVE_SUBAGENTS_DIR:-$HOME/.pi/agent/extensions/pi-interactive-subagents}"
   [ -d "$src" ] || { echo "pi-interactive-subagents not found at $src" >&2; exit 2; }
   ln -s "$src" "$agent_dir/extensions/pi-interactive-subagents"
-  for a in thread-fresh thread-fork; do ln -s "$repo_root/agents/$a.md" "$agent_dir/agents/$a.md"; done
+  for a in thread-fresh thread-fork thread-fresh-nested thread-fork-nested; do ln -s "$repo_root/agents/$a.md" "$agent_dir/agents/$a.md"; done
 fi
 
 git -C "$project" init -q -b main

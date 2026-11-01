@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import piInfinity from "../extensions/index.ts";
+import { interactiveAgentName } from "../extensions/tools/threads.ts";
 
 type Handler = (event: any, ctx: any) => any;
 
@@ -277,6 +278,43 @@ test("R-X1 R-X2 with both subagent tools present the interactive path is used un
     assert.deepEqual(calls, [], "the pi-subagents registry is untouched");
     await s.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, s.ctx);
   }));
+
+test("R-H9 same-mode nested spawns use an alternate agent name", () => {
+  for (const mode of ["fresh", "fork"]) {
+    const base = `thread-${mode}`;
+    assert.equal(interactiveAgentName(base, undefined), base);
+    assert.equal(interactiveAgentName(base, base), `${base}-nested`);
+    assert.equal(interactiveAgentName(base, `${base}-nested`), base);
+  }
+});
+
+test("R-H7a interactive tool errors in details are propagated for spawn and messaging", async () => {
+  const s = await started();
+  let fail = true;
+  const ctx = {
+    ...s.ctx,
+    tools: [{ name: "subagent" }, { name: "subagent_message" }],
+    executeTool: async () =>
+      fail
+        ? { isError: false, result: { content: [{ type: "text", text: "failed" }], details: { error: "transport refused" } } }
+        : {
+            isError: false,
+            result: { content: [{ type: "text", text: "started" }], details: { sessionFile: join(tmpdir(), "x-session.jsonl") } },
+          },
+  };
+  await assert.rejects(
+    s.tools.get("spawn_thread").execute("c", { instructions: "x", child_of: ["root"] }, undefined, undefined, ctx),
+    /subagent failed: transport refused/,
+  );
+  fail = false;
+  const out = await s.tools.get("spawn_thread").execute("c", { instructions: "x", child_of: ["root"] }, undefined, undefined, ctx);
+  fail = true;
+  await assert.rejects(
+    s.tools.get("send_message_to_child").execute("c", { thread_id: out.details.id, message: "hello" }, undefined, undefined, ctx),
+    /subagent_message failed: transport refused/,
+  );
+  await s.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, s.ctx);
+});
 
 test("R-X1 spawn_thread without any subagent tool says what to install", async () => {
   const s = await started();

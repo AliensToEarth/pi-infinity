@@ -320,6 +320,9 @@ export class ThreadService {
           .join(", ") || "(none)";
       throw new Error(`${threadId} is not a direct child of ${this.d.identity.id}. Your children: ${known}`);
     }
+    if (child.record.status === "closed") {
+      throw new Error(`Thread ${threadId} is closed and cannot be resumed. Spawn a new thread for further work.`);
+    }
     if (child.record.transport === "subagents") {
       throw new Error(
         `Thread ${threadId} runs on pi-subagents, which cannot take messages. Wait for its final report, then spawn a new thread if more work is needed.`,
