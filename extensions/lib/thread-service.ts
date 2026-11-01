@@ -198,12 +198,23 @@ export class ThreadService {
         this.d.files.write(record);
         const launched = await io.launch({ agent: fresh ? AGENT_FRESH : AGENT_FORK, task, name: id, cwd: sandbox?.path, model: p.model });
         if (launched.sessionFile) record.sessionFile = launched.sessionFile;
-        this.d.files.write(record);
+        if (!this.disposed) this.d.files.write(record);
       }
     } catch (err) {
       this.d.files.remove(id);
       if (sandbox && backend) await this.cleanupSandbox(backend, sandbox);
       throw err;
+    }
+
+    // A launch can finish after dispose has already traversed the child registry.
+    // Do not register it or recreate its file after the session has ended.
+    if (this.disposed) {
+      if (detached) {
+        void detached.done.catch((err: unknown) => this.d.logger.error("threads.shutdown", err));
+        detached.abort();
+      }
+      this.d.files.remove(id);
+      throw new Error("Cannot spawn a thread after the session has ended.");
     }
 
     const child: Child = { record, callId: io.callId, backend, abort: detached?.abort };

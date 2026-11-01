@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -44,6 +44,64 @@ test("R-H11 invalid adaptive calibration is reported and reset", () => {
   const loaded = loadConfig(dir, memoryLogger(), dir);
   assert.match(loaded.problems.join(" "), /adaptiveConcurrency/);
   assert.deepEqual(loaded.config.threads.adaptiveConcurrency, DEFAULT_CONFIG.threads.adaptiveConcurrency);
+});
+
+test("R-H8 R-H11 shutdown during interactive launch does not register or recreate a thread", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "adaptive-shutdown-"));
+  const files = new ThreadFiles(dir);
+  const logger = memoryLogger();
+  const config = structuredClone(DEFAULT_CONFIG);
+  config.threads.adaptiveConcurrency.enabled = true;
+  const events: string[] = [];
+  const emitter = new Emitter({ send: (m) => events.push(m.content), spillDir: dir, maxChars: 4000, seenCap: 100, logger });
+  const service = new ThreadService({ identity: identify({}, files), files, sandboxes: [], emitter, config, logger });
+  let resolve!: (value: { sessionFile?: string }) => void;
+  let id = "";
+  const io: ThreadIO = {
+    cwd: dir,
+    launch: ({ name }) => {
+      id = name;
+      return new Promise((r) => {
+        resolve = r;
+      });
+    },
+    sendToChild: async () => {},
+  };
+  const pending = service.spawn({ instructions: "work", child_of: ["root"] }, io);
+  assert.ok(existsSync(files.pathFor(id)));
+  service.dispose();
+  resolve({ sessionFile: join(dir, "session.jsonl") });
+  await assert.rejects(pending, /session has ended/);
+  assert.equal(existsSync(files.pathFor(id)), false);
+  assert.deepEqual(service.list(), []);
+  assert.deepEqual(events, []);
+});
+
+test("R-H8 shutdown during detached launch aborts without registering a child", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "detached-shutdown-"));
+  const files = new ThreadFiles(dir);
+  const logger = memoryLogger();
+  const emitter = new Emitter({ send: () => {}, spillDir: dir, maxChars: 4000, seenCap: 100, logger });
+  const service = new ThreadService({ identity: identify({}, files), files, sandboxes: [], emitter, config: DEFAULT_CONFIG, logger });
+  let aborted = false;
+  const io: ThreadIO = {
+    cwd: dir,
+    transport: "subagents",
+    launch: async () => ({}),
+    sendToChild: async () => {},
+    launchDetached: () => {
+      service.dispose();
+      return {
+        done: Promise.resolve({ output: "done", isError: false }),
+        abort: () => {
+          aborted = true;
+        },
+      };
+    },
+  };
+  await assert.rejects(service.spawn({ instructions: "work", child_of: ["root"], fresh_context: true }, io), /session has ended/);
+  assert.equal(aborted, true);
+  assert.deepEqual(service.list(), []);
 });
 
 test("R-H11 reserves concurrent launches and releases after failed launch or child exit", async () => {
