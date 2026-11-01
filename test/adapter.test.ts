@@ -143,7 +143,22 @@ test("R-T1 R-T4 sleep ends the turn, persists the timer and fires an event", asy
   assert.equal((s.entries[0][1] as { op: string }).op, "set");
   await until(() => s.sent.length > 0, 3000);
   assert.match(s.sent[0].m.content, /timer .* fired.*check build/);
-  assert.equal((s.entries.at(-1)?.[1] as { op: string }).op, "fired");
+  assert.equal((s.entries.filter(([type]) => type === "infinity-timer").at(-1)?.[1] as { op: string }).op, "fired");
+});
+
+test("R-E6 session replacement replays only unacknowledged events from the new branch", async () => {
+  const s = await started();
+  const input = { sourceId: "job-old", kind: "job_exit", seq: 0, source: { tool: "bg_run" }, body: "finished" };
+  const pending = { type: "custom", customType: "infinity-event-pending", data: input };
+  const ctx = { ...s.ctx, sessionManager: { ...s.ctx.sessionManager, getBranch: () => [pending] } };
+  await s.emit("session_start", { type: "session_start" }, ctx);
+  assert.equal(s.sent.length, 1);
+  assert.match(s.sent[0].m.content, /finished/);
+  const ack = { type: "custom_message", customType: "infinity-event", details: s.sent[0].m.details };
+  const acknowledged = { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [pending, ack] } };
+  await s.emit("session_start", { type: "session_start" }, acknowledged);
+  assert.equal(s.sent.length, 1);
+  await s.emit("session_shutdown", { type: "session_shutdown" }, acknowledged);
 });
 
 test("R-T1 sleep_until_event registers nothing and terminates", async () => {

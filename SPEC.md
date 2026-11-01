@@ -216,6 +216,14 @@ R-E4. A renderer is registered for `infinity-event`. Collapsed view is one line,
       view shows the body.
 R-E5. The emitter never throws. Failures go to `logError` and a `ui.notify` warning.
       If the warning itself fails, log that failure without propagating it.
+R-E6. Before sending, persist the event input as an `infinity-event-pending` entry on
+      the active session branch. A persisted `infinity-event` custom message acknowledges
+      delivery. On startup, replay pending entries without an acknowledgement on that branch;
+      restore the bounded seen-set from acknowledged messages. Send failures remain retryable.
+      This is at-least-once delivery: a crash between message processing and persistence can
+      redeliver. This acknowledges transcript persistence, not model processing. It cannot
+      recover outcomes lost before their pending entry is persisted: in particular a timer
+      crash after its `fired` record but before enqueue loses that wake-up.
 
 ## 5. Modules
 

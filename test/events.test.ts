@@ -108,6 +108,57 @@ test("R-E5 notification failure is logged without throwing", () => {
   assert.match(logger.lines[1], /events\.notify.*notify failed/);
 });
 
+test("R-E6 persists before send and replays only unacknowledged branch events", () => {
+  const input = { ...base, body: "done" };
+  const persisted: unknown[] = [];
+  const sent: OutgoingMessage[] = [];
+  const options = { spillDir: tmpdir(), maxChars: 400, seenCap: 3, logger: memoryLogger() };
+  const first = new Emitter({
+    ...options,
+    persist: (e) => persisted.push(e),
+    send: (m) => {
+      assert.equal(persisted.length, 1);
+      sent.push(m);
+    },
+  });
+  first.emit(input);
+  const pending = { type: "custom", customType: "infinity-event-pending", data: input };
+  const replayed: OutgoingMessage[] = [];
+  const resumed = new Emitter({ ...options, persist: () => assert.fail("must not repersist"), send: (m) => replayed.push(m) });
+  resumed.restore([pending]);
+  assert.equal(replayed.length, 1);
+  const acknowledged = new Emitter({ ...options, send: (m) => replayed.push(m) });
+  acknowledged.restore([pending, { type: "custom_message", customType: "infinity-event", details: sent[0].details }]);
+  assert.equal(replayed.length, 1);
+  assert.equal(acknowledged.emit(input), false);
+});
+
+test("R-E6 send or persistence failure is retryable", () => {
+  let failPersist = true;
+  let failSend = true;
+  let writes = 0;
+  const emitter = new Emitter({
+    spillDir: tmpdir(),
+    maxChars: 400,
+    seenCap: 3,
+    logger: memoryLogger(),
+    persist: () => {
+      if (failPersist) throw new Error("persist");
+      writes++;
+    },
+    send: () => {
+      if (failSend) throw new Error("send");
+    },
+  });
+  const input = { ...base, body: "done" };
+  assert.equal(emitter.emit(input), false);
+  failPersist = false;
+  assert.equal(emitter.emit(input), false);
+  failSend = false;
+  assert.equal(emitter.emit(input), true);
+  assert.equal(writes, 1);
+});
+
 test("content format is stable", () => {
   const text = formatEventContent({ ...base, body: "b" }, "b");
   assert.equal(text, '[infinity event] job_exit from bg_run (c1)\noriginal_args: {"command":"ls"}\n---\nb');

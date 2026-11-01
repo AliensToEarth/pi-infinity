@@ -105,6 +105,19 @@ export function spillIfLarge(
   return { text: `${head}\n${marker}\n${tail}`, path: saved ? path : undefined };
 }
 
+function isEventInput(value: unknown): value is EventInput {
+  if (!value || typeof value !== "object") return false;
+  const input = value as Partial<EventInput>;
+  return (
+    typeof input.sourceId === "string" &&
+    typeof input.kind === "string" &&
+    typeof input.seq === "number" &&
+    typeof input.body === "string" &&
+    !!input.source &&
+    typeof input.source.tool === "string"
+  );
+}
+
 export interface EmitterOptions {
   send: Send;
   spillDir: string;
@@ -112,6 +125,7 @@ export interface EmitterOptions {
   seenCap: number;
   logger: Logger;
   notify?: (message: string) => void;
+  persist?: (input: EventInput) => void;
 }
 
 /**
@@ -120,6 +134,7 @@ export interface EmitterOptions {
  */
 export class Emitter {
   private readonly seen = new Set<string>();
+  private readonly pending = new Map<string, EventInput>();
   private readonly opts: EmitterOptions;
 
   constructor(opts: EmitterOptions) {
@@ -130,8 +145,11 @@ export class Emitter {
   emit(input: EventInput): boolean {
     const eventId = eventIdOf(input);
     if (this.seen.has(eventId)) return false;
-    this.remember(eventId);
     try {
+      if (!this.pending.has(eventId)) {
+        this.opts.persist?.(input);
+        this.pending.set(eventId, input);
+      }
       const half = Math.floor(this.opts.maxChars / 4);
       const spilled = spillIfLarge(
         input.body,
@@ -153,6 +171,8 @@ export class Emitter {
         },
       };
       this.opts.send(message, { triggerTurn: true, deliverAs: "steer" });
+      this.remember(eventId);
+      this.pending.delete(eventId);
       return true;
     } catch (err) {
       this.opts.logger.error("events.emit", err);
@@ -163,6 +183,25 @@ export class Emitter {
       }
       return false;
     }
+  }
+
+  /** Replay only inputs not already present as custom messages on the active branch. */
+  restore(branch: ReadonlyArray<{ type: string; customType?: string; data?: unknown; details?: unknown }>): void {
+    const acknowledged = new Set<string>();
+    for (const entry of branch) {
+      if (entry.type === "custom" && entry.customType === "infinity-event-pending" && isEventInput(entry.data)) {
+        this.pending.set(eventIdOf(entry.data), entry.data);
+      }
+      if (entry.type === "custom_message") {
+        const details = entry.details as { eventId?: unknown } | undefined;
+        if (entry.customType === EVENT_TYPE && typeof details?.eventId === "string") {
+          acknowledged.add(details.eventId);
+          this.remember(details.eventId);
+        }
+      }
+    }
+    for (const id of acknowledged) this.pending.delete(id);
+    for (const input of this.pending.values()) this.emit(input);
   }
 
   private remember(id: string): void {

@@ -74,7 +74,9 @@ export function createRuntime(pi: ExtensionAPI, ctx: ExtensionContext): Runtime 
     seenCap: config.events.seenCap,
     logger,
     notify: (m) => notify(m, "warning"),
+    persist: (input) => pi.appendEntry("infinity-event-pending", input),
   });
+  emitter.restore(ctx.sessionManager.getBranch() as never);
   const jobs = new JobManager({
     emit: (e) => void emitter.emit(e),
     logDir: join(artifactDir, "jobs"),
