@@ -1,7 +1,8 @@
 # pi-infinity
 
-Design rules from the [Infinity](https://github.com/hydro-project/infinity) agent runtime, as a
-pi package.
+An independent pi package inspired by design ideas from the
+[Infinity](https://github.com/hydro-project/infinity) agent runtime. pi-infinity is an original
+implementation, not Infinity itself.
 
 An agent that waits is an agent that wastes time and tokens. pi-infinity lets pi dispatch slow
 work, yield, and pick the result up later. Everything that happens in the background comes
@@ -30,11 +31,10 @@ and context:
 2. The model **polls**, with `sleep` loops and `tail -f`, to find out whether something finished.
 3. The model **floods its context** with unbounded output from tools.
 
-Infinity, a Rust runtime for large numbers of concurrent agents, solves the same problem with a
-small set of rules. An agent step never blocks on anything external. Slow work is dispatched
-and the agent yields. Whatever the agent was waiting for later shows up as a message. Child
-threads exist mainly to keep the parent's context clean. pi-infinity carries those rules over
-to pi. Threads run on top of one of two subagent extensions,
+[Infinity](https://github.com/hydro-project/infinity), a Rust agent runtime, inspired the ideas
+behind pi-infinity: dispatch slow work, yield, receive results as messages, and use child threads
+to keep the parent's context focused. pi-infinity adapts these ideas to pi in its own
+implementation. Threads run on top of one of two subagent extensions,
 [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents) or
 [pi-subagents](https://github.com/amosblomqvist/pi-subagents), instead of replacing them. The full research and the reasoning behind
 each feature are in [`SPEC.md`](SPEC.md).
