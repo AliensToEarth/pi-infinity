@@ -301,6 +301,14 @@ test("R-X6 an error outcome is labeled", async () => {
   assert.match(d.sent[0].content, /has finished with an error\. Final report: Error: exit 1/);
 });
 
+async function waitForClosed(svc: { hasClosed(id: string): boolean }, id: string): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!svc.hasClosed(id)) {
+    if (Date.now() >= deadline) throw new Error(`thread ${id} did not finish finalizing`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
 test("R-X6 a sandbox is committed and its diff stat listed when the call settles", async () => {
   const d = detached();
   const { id } = await d.svc.spawn({ instructions: "x", child_of: ["root"], fresh_context: true, sandbox: true }, d.io);
@@ -308,7 +316,7 @@ test("R-X6 a sandbox is committed and its diff stat listed when the call settles
   assert.ok(cwd.endsWith(id) && existsSync(cwd));
   writeFileSync(join(cwd, "child.txt"), "hi\n");
   d.resolve({ output: "made child.txt", isError: false });
-  await new Promise((r) => setTimeout(r, 300));
+  await waitForClosed(d.svc, id);
   assert.match(d.sent[0].content, /child\.txt/);
   assert.match(d.sent[0].content, /squash_sandbox/);
   assert.match(git(d.repo, "log", "--oneline", `sandbox-${id}`), /thread t-/);
@@ -334,7 +342,7 @@ test("R-S5 squash rejects a running or finalizing subagents sandbox", async () =
   await assert.rejects(d.svc.squash(id, {}, io), /still running or finalizing/);
   assert.equal(confirmations, 0);
   assert.ok(existsSync(cwd));
-  await new Promise((r) => setTimeout(r, 300));
+  await waitForClosed(d.svc, id);
   assert.equal(d.svc.hasClosed(id), true);
   await d.svc.squash(id, {}, io);
   assert.equal(git(d.repo, "diff", "--cached", "--name-only"), "child.txt");
