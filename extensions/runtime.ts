@@ -4,7 +4,7 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type InfinityConfig } from "./lib/config.ts";
-import { Emitter } from "./lib/events.ts";
+import { Emitter, eventIdOf, type EventInput } from "./lib/events.ts";
 import { JobManager } from "./lib/jobs.ts";
 import { createLogger, type Logger } from "./lib/log.ts";
 import { GitSandbox } from "./lib/sandbox.ts";
@@ -50,6 +50,46 @@ export function timerEntriesFromBranch(branch: ReadonlyArray<{ type: string; cus
   return out;
 }
 
+function timerEvent(timer: Extract<TimerEntry, { op: "set" }>["timer"], at: number): EventInput {
+  const lateMs = Math.max(0, at - timer.dueAt);
+  const late = lateMs > 1000 ? ` (late by ${Math.round(lateMs / 1000)}s, the session was not running)` : "";
+  return {
+    sourceId: timer.id,
+    kind: "timer",
+    seq: 0,
+    source: { tool: timer.kind, args: { note: timer.note } },
+    body: `timer ${timer.id} fired${late}.${timer.note ? ` note: ${timer.note}` : ""}`,
+  };
+}
+
+/** Recover a fired timer whose process died before its event reached the outbox. */
+export function missingTimerEvents(
+  branch: ReadonlyArray<{ type: string; customType?: string; data?: unknown; details?: unknown }>,
+): EventInput[] {
+  const timers = new Map<string, Extract<TimerEntry, { op: "set" }>["timer"]>();
+  const fired: EventInput[] = [];
+  const present = new Set<string>();
+  for (const entry of branch) {
+    if (entry.type === "custom" && entry.customType === "infinity-timer" && isTimerEntry(entry.data)) {
+      const record = entry.data;
+      if (record.op === "set" && record.timer && typeof record.timer.id === "string") timers.set(record.timer.id, record.timer);
+      if (record.op === "fired" && typeof record.id === "string" && Number.isFinite(record.at)) {
+        const timer = timers.get(record.id);
+        if (timer && Number.isFinite(timer.dueAt)) fired.push(timerEvent(timer, record.at));
+      }
+    } else if (entry.type === "custom" && entry.customType === "infinity-event-pending") {
+      const input = entry.data as Partial<EventInput> | undefined;
+      if (input && typeof input.sourceId === "string" && typeof input.kind === "string" && typeof input.seq === "number") {
+        present.add(eventIdOf(input as EventInput));
+      }
+    } else if (entry.type === "custom_message" && entry.customType === "infinity-event") {
+      const details = entry.details as { eventId?: unknown } | undefined;
+      if (typeof details?.eventId === "string") present.add(details.eventId);
+    }
+  }
+  return fired.filter((event) => !present.has(eventIdOf(event)));
+}
+
 export function agentDir(): string {
   return process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 }
@@ -76,9 +116,12 @@ export function createRuntime(pi: ExtensionAPI, ctx: ExtensionContext): Runtime 
     notify: (m) => notify(m, "warning"),
     persist: (input) => pi.appendEntry("infinity-event-pending", input),
   });
-  emitter.restore(ctx.sessionManager.getBranch() as never);
+  const branch = ctx.sessionManager.getBranch();
+  emitter.restore(branch as never);
+  for (const event of missingTimerEvents(branch as never)) emitter.emit(event);
+  const jobEventScope = randomBytes(16).toString("hex");
   const jobs = new JobManager({
-    emit: (e) => void emitter.emit(e),
+    emit: (e) => void emitter.emit({ ...e, sourceId: `${jobEventScope}:${e.sourceId}` }),
     logDir: join(artifactDir, "jobs"),
     config: config.jobs,
     logger,
@@ -89,20 +132,13 @@ export function createRuntime(pi: ExtensionAPI, ctx: ExtensionContext): Runtime 
     clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
     persist: (entry) => pi.appendEntry("infinity-timer", entry),
     fire: (timer, lateMs) => {
-      const late = lateMs > 1000 ? ` (late by ${Math.round(lateMs / 1000)}s, the session was not running)` : "";
-      emitter.emit({
-        sourceId: timer.id,
-        kind: "timer",
-        seq: 0,
-        source: { tool: timer.kind, args: { note: timer.note } },
-        body: `timer ${timer.id} fired${late}.${timer.note ? ` note: ${timer.note}` : ""}`,
-      });
+      emitter.emit(timerEvent(timer, timer.dueAt + lateMs));
     },
     newId: () => `timer-${randomBytes(3).toString("hex")}`,
     max: config.timers.max,
     logger,
   });
-  const restored = timers.restore(timerEntriesFromBranch(ctx.sessionManager.getBranch() as never));
+  const restored = timers.restore(timerEntriesFromBranch(branch as never));
   if (restored.rearmed + restored.firedLate > 0)
     logger.debug("timers", `restored ${restored.rearmed} timers, ${restored.firedLate} fired late`);
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -159,6 +159,52 @@ test("R-E6 session replacement replays only unacknowledged events from the new b
   await s.emit("session_start", { type: "session_start" }, acknowledged);
   assert.equal(s.sent.length, 1);
   await s.emit("session_shutdown", { type: "session_shutdown" }, acknowledged);
+});
+
+test("R-E6 recovers timer fired before outbox persistence without replaying delivered timers", async () => {
+  const s = await started();
+  const timer = { id: "timer-lost", kind: "sleep", setAt: 100, dueAt: 200, note: "wake" };
+  const records = [
+    { type: "custom", customType: "infinity-timer", data: { op: "set", timer } },
+    { type: "custom", customType: "infinity-timer", data: { op: "fired", id: timer.id, at: 200 } },
+  ];
+  const ctx = { ...s.ctx, sessionManager: { ...s.ctx.sessionManager, getBranch: () => records } };
+  await s.emit("session_start", { type: "session_start" }, ctx);
+  assert.equal(s.sent.length, 1);
+  assert.match(s.sent[0].m.content, /timer timer-lost fired\. note: wake/);
+  assert.equal(s.entries.filter(([type]) => type === "infinity-event-pending").length, 1);
+  const ack = { type: "custom_message", customType: "infinity-event", details: s.sent[0].m.details };
+  const acknowledged = { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [...records, ack] } };
+  await s.emit("session_start", { type: "session_start" }, acknowledged);
+  assert.equal(s.sent.length, 1);
+  await s.emit("session_shutdown", { type: "session_shutdown" }, acknowledged);
+});
+
+test("R-E7 reused job ids after restart do not collide with acknowledged events", async () => {
+  const f = fakePi();
+  piInfinity(f.pi as never);
+  const dir = mkdtempSync(join(tmpdir(), "pi-inf-job-restart-"));
+  const base = fakeCtx(dir);
+  const ctx = { ...base, sessionManager: { ...base.sessionManager, getSessionFile: () => join(dir, "session.jsonl") } };
+  await f.emit("session_start", { type: "session_start" }, ctx);
+  const first = await f.tools.get("bg_run").execute("one", { command: "echo first" }, undefined, undefined, ctx);
+  assert.match(first.content[0].text, /Job j1 started/);
+  await until(() => f.sent.length === 1);
+  const ack = { type: "custom_message", customType: "infinity-event", details: f.sent[0].m.details };
+  await f.emit("session_shutdown", { type: "session_shutdown" }, ctx);
+  rmSync(join(dir, "artifacts", "s1", "infinity", "jobs"), { recursive: true, force: true });
+  const resumed = { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [ack] } };
+  await f.emit("session_start", { type: "session_start" }, resumed);
+  const second = await f.tools.get("bg_run").execute("two", { command: "echo second" }, undefined, undefined, resumed);
+  assert.match(second.content[0].text, /Job j1 started/);
+  await until(() => f.sent.length === 2);
+  assert.notEqual(f.sent[0].m.details.eventId, f.sent[1].m.details.eventId);
+  const pending = { type: "custom", customType: "infinity-event-pending", data: f.entries.at(-1)?.[1] };
+  const crashed = { ...ctx, sessionManager: { ...ctx.sessionManager, getBranch: () => [ack, pending] } };
+  await f.emit("session_start", { type: "session_start" }, crashed);
+  assert.equal(f.sent.length, 3);
+  assert.equal(f.sent[2].m.details.eventId, f.sent[1].m.details.eventId);
+  await f.emit("session_shutdown", { type: "session_shutdown" }, crashed);
 });
 
 test("R-T1 sleep_until_event registers nothing and terminates", async () => {

@@ -222,8 +222,11 @@ R-E6. Before sending, persist the event input as an `infinity-event-pending` ent
       restore the bounded seen-set from acknowledged messages. Send failures remain retryable.
       This is at-least-once delivery: a crash between message processing and persistence can
       redeliver. This acknowledges transcript persistence, not model processing. It cannot
-      recover outcomes lost before their pending entry is persisted: in particular a timer
-      crash after its `fired` record but before enqueue loses that wake-up.
+      recover outcomes lost before their pending entry is persisted, except fired timers:
+      startup reconstructs a missing timer event from its set and fired records, unless an
+      outbox entry or delivered message already exists on the branch.
+R-E7. Job event source ids include a fresh runtime nonce so a restarted session can reuse
+      a tool-facing job id without colliding with earlier durable event ids.
 
 ## 5. Modules
 
