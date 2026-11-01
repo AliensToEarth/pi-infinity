@@ -357,6 +357,35 @@ test("R-X8 dispose aborts running threads, keeps the sandbox and emits nothing",
   assert.match(git(d.repo, "branch", "--list", `sandbox-${id}`), /sandbox-t-/);
 });
 
+test("R-X8 shutdown during sandbox creation never launches a child and keeps the sandbox", async () => {
+  const d = detached();
+  const pick = d.svc.pickBackend.bind(d.svc);
+  let release!: () => void;
+  let created!: () => void;
+  const ready = new Promise<void>((resolve) => (created = resolve));
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  d.svc.pickBackend = async (cwd) => {
+    const picked = await pick(cwd);
+    assert.ok(picked);
+    const create = picked.backend.create.bind(picked.backend);
+    picked.backend.create = async (args) => {
+      const sandbox = await create(args);
+      created();
+      await gate;
+      return sandbox;
+    };
+    return picked;
+  };
+  const spawning = d.svc.spawn({ instructions: "x", child_of: ["root"], fresh_context: true, sandbox: true }, d.io);
+  await ready;
+  d.svc.dispose();
+  release();
+  await assert.rejects(spawning, /session has ended/);
+  assert.equal(d.launches.length, 0);
+  assert.match(git(d.repo, "branch", "--list", "sandbox-*"), /sandbox-t-/);
+  await assert.rejects(d.svc.spawn({ instructions: "x", child_of: ["root"], fresh_context: true }, d.io), /session has ended/);
+});
+
 test("R-X10 several threads run side by side and close independently", async () => {
   const d = detached();
   const resolvers: Array<(v: { output: string; isError: boolean }) => void> = [];

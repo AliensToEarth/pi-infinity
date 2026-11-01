@@ -113,6 +113,7 @@ export class ThreadService {
 
   /** R-H1 to R-H4, R-S1. */
   async spawn(p: SpawnParams, io: ThreadIO): Promise<{ id: string; text: string }> {
+    if (this.disposed) throw new Error("Cannot spawn a thread after the session has ended.");
     const check = checkChildOf(this.d.identity.stack, p.child_of, this.d.config.threads.maxDepth);
     if (!check.ok) throw new Error(check.message);
     if (p.instructions.trim() === "") throw new Error("instructions must not be empty");
@@ -134,11 +135,16 @@ export class ThreadService {
     if (p.sandbox) {
       const where = this.d.identity.record?.sandbox?.path ?? io.cwd;
       const picked = await this.pickBackend(where);
+      if (this.disposed) throw new Error("Cannot spawn a thread after the session has ended.");
       if (!picked) throw new Error(`sandbox: true needs a git or jj repository, but ${where} is not inside one`);
       backend = picked.backend;
       const parentBranch = this.d.identity.record?.sandbox?.branch;
       sandbox = await backend.create({ cwd: where, id, base: parentBranch, root: this.d.config.sandbox.root });
     }
+
+    // Sandbox creation awaits external commands. Shutdown can happen while they run; do
+    // not launch a child after dispose, and leave any newly created sandbox intact.
+    if (this.disposed) throw new Error("Cannot spawn a thread after the session has ended.");
 
     const record: ThreadRecord = {
       id,

@@ -625,6 +625,8 @@ R-X7. `send_message_to_child` fails with a clear message on this transport. Chil
       not offered, so `report_to_parent` and `close_thread` do not exist for these children.
       Thread depth is 1.
 R-X8. Session end aborts running subagents-transport threads. Their sandboxes stay intact.
+      A spawn still preparing a sandbox at session end must not launch a child afterward;
+      any sandbox already created stays intact.
 R-X9. The task frame for this transport says: you have built-in tools only, your last message
       is the final report, there is no `close_thread`.
 R-X10. If the nested call is queued by the pi-subagents semaphore, the thread simply stays
