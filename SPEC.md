@@ -238,12 +238,15 @@ R-J3. All output (stdout and stderr merged in arrival order) goes to the job log
       `bg_output` requires a non-negative safe integer `since` and a positive safe integer `tail`.
       Byte-range reads never split UTF-8 characters: a `since` inside a character skips its
       remaining bytes, and an incomplete character at the end is deferred to the next read.
+      Once the job is finalized, later output from inherited pipes is discarded.
 R-J4. Exit always emits one `job_exit` event with status (`exited`, `signaled`, `cancelled`,
       `timeout`, `error`), exit code, duration, the last `jobs.tailLines` lines, line count,
       and the log path. Tail is subject to R-E2. The job timeout stops when the shell exits,
       even if inherited output pipes remain open while the manager waits to finalize.
 R-J5. `watch` patterns are compiled at start. An invalid pattern or one longer than 200
-      characters fails the call with a clear error and starts nothing.
+      characters fails the call with a clear error and starts nothing. To bound memory,
+      watch patterns inspect at most the first 65536 UTF-16 code units of each line;
+      longer lines are still counted once and retained in the log subject to its cap.
 R-J6. Matching lines are batched. A batch is flushed after `watchDebounceMs` of quiet or at
       `watchBatchLines` lines. At most `watchEventsPerMin` match events are emitted per job
       per minute. Further matches are counted, not delivered, and reported in the exit

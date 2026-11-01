@@ -195,6 +195,53 @@ test("R-J4 timeout stops at shell exit while output pipes remain open", async ()
   child.stderr.destroy();
 });
 
+test("R-J5 long unterminated lines are bounded and counted once", () => {
+  const child = Object.assign(new EventEmitter(), { pid: 12345, stdout: new PassThrough(), stderr: new PassThrough() });
+  const events: EventInput[] = [];
+  const mgr = new JobManager({
+    emit: (event) => void events.push(event),
+    logDir: mkdtempSync(join(tmpdir(), "pi-inf-jobs-")),
+    config: DEFAULT_CONFIG.jobs,
+    logger: memoryLogger(),
+    spawn: () => child as unknown as ChildProcess,
+  });
+  const job = mgr.start({ command: "fake", cwd: tmpdir(), watch: ["needle"] });
+  child.stdout.write("x".repeat(65536));
+  child.stdout.write("needle\nneedle\n");
+  child.emit("exit", 0, null);
+  child.emit("close");
+  assert.equal(job.lines, 2);
+  assert.equal(job.matches, 1);
+  assert.equal(readFileSync(job.logPath, "utf8"), "x".repeat(65536) + "needle\nneedle\n");
+  child.stdout.destroy();
+  child.stderr.destroy();
+});
+
+test("R-J3 output arriving after finalization cannot mutate the job or emit matches", async () => {
+  const child = Object.assign(new EventEmitter(), { pid: 12345, stdout: new PassThrough(), stderr: new PassThrough() });
+  const events: EventInput[] = [];
+  const mgr = new JobManager({
+    emit: (event) => void events.push(event),
+    logDir: mkdtempSync(join(tmpdir(), "pi-inf-jobs-")),
+    config: { ...DEFAULT_CONFIG.jobs, watchBatchLines: 1 },
+    logger: memoryLogger(),
+    spawn: () => child as unknown as ChildProcess,
+    closeGraceMs: 10,
+  });
+  const job = mgr.start({ command: "fake", cwd: tmpdir(), watch: ["late"] });
+  child.stdout.write("early\n");
+  child.emit("exit", 0, null);
+  await until(() => exits(events).length === 1);
+  child.stdout.write("late\n");
+  assert.equal(job.bytes, 6);
+  assert.equal(job.lines, 1);
+  assert.equal(job.matches, 0);
+  assert.equal(events.length, 1);
+  assert.equal(readFileSync(job.logPath, "utf8"), "early\n");
+  child.stdout.destroy();
+  child.stderr.destroy();
+});
+
 test("R-J4 spawn failure becomes a job_exit with status error", async () => {
   const { mgr, events } = setup();
   const job = mgr.start({ command: "echo hi", cwd: "/definitely/not/a/dir" });

@@ -320,6 +320,7 @@ export class JobManager {
   }
 
   private onData(st: Internal, stream: "stdout" | "stderr", chunk: string): void {
+    if (st.finalized) return;
     st.job.bytes += Buffer.byteLength(chunk);
     if (st.job.bytes <= MAX_LOG_BYTES) {
       try {
@@ -332,10 +333,14 @@ export class JobManager {
     }
     st.ring += chunk;
     if (st.ring.length > RING_BYTES) st.ring = st.ring.slice(st.ring.length - RING_BYTES);
-    const combined = st.partial[stream] + chunk;
-    const parts = combined.split("\n");
-    st.partial[stream] = parts.pop() ?? "";
-    for (const line of parts) this.onLine(st, line);
+    const parts = chunk.split("\n");
+    if (parts.length === 1) {
+      st.partial[stream] = (st.partial[stream] + chunk).slice(0, RING_BYTES);
+      return;
+    }
+    this.onLine(st, (st.partial[stream] + parts[0]).slice(0, RING_BYTES));
+    for (let i = 1; i < parts.length - 1; i++) this.onLine(st, parts[i].slice(0, RING_BYTES));
+    st.partial[stream] = (parts[parts.length - 1] ?? "").slice(0, RING_BYTES);
   }
 
   private onLine(st: Internal, line: string): void {
