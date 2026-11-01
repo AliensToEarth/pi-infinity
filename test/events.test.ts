@@ -89,6 +89,25 @@ test("R-E5 emitter never throws when send fails", () => {
   assert.equal(notes.length, 1);
 });
 
+test("R-E5 notification failure is logged without throwing", () => {
+  const logger = memoryLogger();
+  const emitter = new Emitter({
+    send: () => {
+      throw new Error("send failed");
+    },
+    spillDir: tmpdir(),
+    maxChars: 100,
+    seenCap: 5,
+    logger,
+    notify: () => {
+      throw new Error("notify failed");
+    },
+  });
+  assert.equal(emitter.emit({ ...base, body: "hi" }), false);
+  assert.equal(logger.lines.length, 2);
+  assert.match(logger.lines[1], /events\.notify.*notify failed/);
+});
+
 test("content format is stable", () => {
   const text = formatEventContent({ ...base, body: "b" }, "b");
   assert.equal(text, '[infinity event] job_exit from bg_run (c1)\noriginal_args: {"command":"ls"}\n---\nb');

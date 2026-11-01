@@ -156,7 +156,11 @@ export class Emitter {
       return true;
     } catch (err) {
       this.opts.logger.error("events.emit", err);
-      this.opts.notify?.(`pi-infinity could not deliver event ${eventId}, see infinity.log`);
+      try {
+        this.opts.notify?.(`pi-infinity could not deliver event ${eventId}, see infinity.log`);
+      } catch (notifyErr) {
+        this.opts.logger.error("events.notify", notifyErr);
+      }
       return false;
     }
   }

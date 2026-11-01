@@ -6,6 +6,11 @@ import { test } from "node:test";
 import piInfinity from "../extensions/index.ts";
 import { interactiveAgentName } from "../extensions/tools/threads.ts";
 
+// These adapter tests exercise a root session, even when the test runner is itself a subagent.
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("PI_SUBAGENT_")) delete process.env[key];
+}
+
 type Handler = (event: any, ctx: any) => any;
 
 function fakePi() {
