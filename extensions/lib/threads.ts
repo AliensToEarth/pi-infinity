@@ -100,7 +100,7 @@ export function frameTask(o: FrameOptions): string {
     "",
     "How to finish:",
     "- Use report_to_parent for intermediate results that your parent needs before you are done.",
-    "- When the work is complete call close_thread with a short final report. Calling it ends your session.",
+    "- When the work is complete call close_thread with structured: {summary, files?, tests?, blockers?}; optional fields are arrays of strings. Keep it concise. Calling it ends your session.",
     "- If you spawn threads yourself, pass your own stack as child_of.",
   ];
   if (o.sandbox) {
@@ -123,7 +123,7 @@ function frameBlockingTask(o: FrameOptions): string {
     o.instructions,
     "",
     "How to finish:",
-    "- Your LAST message is your final report to the parent. Make it short and concrete: what you did, what changed, what is left.",
+    '- Your LAST message is your final report: a JSON object {"summary":"...","files":["..."],"tests":["..."],"blockers":["..."]}. Only summary is required; keep it concise and omit empty arrays.',
     "- There is no close_thread tool. Stopping after your final message ends the thread.",
   ];
   if (o.sandbox) {

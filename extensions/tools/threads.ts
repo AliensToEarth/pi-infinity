@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { fileURLToPath } from "node:url";
 import { loadBlockingPrompt, launchViaSubagents } from "../lib/subagents-launch.ts";
+import { encodeReport } from "../lib/thread-reports.ts";
 import type { ThreadIO, ThreadService } from "../lib/thread-service.ts";
 import { pickTransport, readAgentRegistry, type TransportSetting } from "../lib/transport.ts";
 import { tool, type ToolDef } from "./types.ts";
@@ -144,6 +145,16 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
   return [spawnThread, sendToChild, squash];
 }
 
+const structuredReport = Type.Object(
+  {
+    summary: Type.String({ minLength: 1 }),
+    files: Type.Optional(Type.Array(Type.String())),
+    tests: Type.Optional(Type.Array(Type.String())),
+    blockers: Type.Optional(Type.Array(Type.String())),
+  },
+  { additionalProperties: false },
+);
+
 /** Tools that exist only inside a thread session. */
 export function childTools(svc: () => ThreadService): ToolDef[] {
   const report = tool({
@@ -151,9 +162,9 @@ export function childTools(svc: () => ThreadService): ToolDef[] {
     label: "Report to parent",
     description:
       "Send an intermediate result to your parent thread without ending your session. The parent sees it as an [infinity event] message.",
-    parameters: Type.Object({ report: Type.String() }),
+    parameters: Type.Object({ report: Type.Optional(Type.String()), structured: Type.Optional(structuredReport) }),
     async execute(_id, params) {
-      svc().report(params.report);
+      svc().report(encodeReport(params.report, params.structured, true)!);
       return { content: [{ type: "text", text: "Report sent to the parent thread." }], details: {} };
     },
   });
@@ -162,9 +173,12 @@ export function childTools(svc: () => ThreadService): ToolDef[] {
     name: "close_thread",
     label: "Close thread",
     description: "Finish this thread. Pass a short final report for the parent. Calling this ends your session, so do it last.",
-    parameters: Type.Object({ report: Type.Optional(Type.String({ description: "Final report for the parent" })) }),
+    parameters: Type.Object({
+      report: Type.Optional(Type.String({ description: "Final report for the parent" })),
+      structured: Type.Optional(structuredReport),
+    }),
     async execute(_id, params) {
-      svc().close(params.report);
+      svc().close(encodeReport(params.report, params.structured, false));
       return { content: [{ type: "text", text: "Thread closed. Your report was sent to the parent." }], details: {}, terminate: true };
     },
   });

@@ -2,6 +2,7 @@ import type { InfinityConfig } from "./config.ts";
 import type { Emitter } from "./events.ts";
 import type { Logger } from "./log.ts";
 import type { SandboxBackend } from "./sandbox.ts";
+import { renderReport } from "./thread-reports.ts";
 import { NO_TRANSPORT_MESSAGE } from "./transport.ts";
 import {
   AGENT_FORK,
@@ -235,7 +236,7 @@ export class ThreadService {
         kind: "child_report",
         seq: line.seq,
         source,
-        body: `Report from child thread ${rec.id}: ${line.text ?? ""}`,
+        body: `Report from child thread ${rec.id}: ${renderReport(line.text ?? "")}`,
       });
       return;
     }
@@ -277,7 +278,7 @@ export class ThreadService {
     if (rec.status === "closed" || child.closing) return;
     child.closing = true;
     child.watcher?.stop();
-    const text = line.text?.trim() || "(no report)";
+    const text = renderReport(line.text?.trim() || "(no report)");
     const parts = [
       rec.transport === "subagents"
         ? `Child thread ${rec.id} has finished${outcome === "error" ? " with an error" : ""}. Final report: ${text}`

@@ -220,6 +220,18 @@ test("R-H5 R-H6 reports and close arrive as one event each, thread file removed 
   assert.equal(h.svc.list()[0].status, "closed");
 });
 
+test("R-H6a interactive structured reports are rendered in parent events", async () => {
+  const h = harness();
+  const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"] }, h.io);
+  const inbox = inboxPath(join(h.sessionDir, `${id}.jsonl`));
+  appendInbox(inbox, { type: "report", seq: 0, text: JSON.stringify({ summary: "Progress", files: ["a.ts"] }), at: 1 });
+  appendInbox(inbox, { type: "closed", seq: 1, text: JSON.stringify({ summary: "Done", tests: ["passed"] }), at: 2 });
+  await until(() => h.sent.length >= 2);
+  assert.match(h.sent[0].content, /Progress\nFiles: a.ts/);
+  assert.match(h.sent[1].content, /Done\nTests: passed/);
+  h.svc.dispose();
+});
+
 test("R-H6 child side tools write to the inbox and refuse in the root session", () => {
   const dir = tmp("pi-inf-child-");
   const files = new ThreadFiles(dir);

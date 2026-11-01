@@ -336,8 +336,8 @@ and does not register its tools.
 | Tool | Where | Parameters |
 |------|-------|-----------|
 | `spawn_thread` | root and thread agents | `instructions`, `child_of` (string[]), `fresh_context?`, `model?`, `sandbox?` |
-| `report_to_parent` | thread agents | `report` |
-| `close_thread` | thread agents | `report?` |
+| `report_to_parent` | thread agents | `report?`, `structured?` |
+| `close_thread` | thread agents | `report?`, `structured?` |
 | `send_message_to_child` | root and thread agents | `thread_id`, `message` |
 | `squash_sandbox` | root and thread agents | `thread_id`, `commit?` |
 
@@ -363,6 +363,12 @@ R-H5. `report_to_parent` appends one JSON line `{type:"report", seq, text, at}`.
 R-H6. `close_thread` appends `{type:"closed", report?}` and returns `terminate: true`. The
       parent emits `child_closed` with the report. The thread session then exits through
       the subagent auto-exit path.
+R-H6a. Reports may instead use `structured: {summary, files?, tests?, blockers?}`, where
+       `summary` is a nonempty string and each optional field is an array of strings. A report
+       cannot contain both `report` and `structured`; `report_to_parent` requires one. Structured
+       reports are serialized in the existing text field and rendered concisely for the parent.
+       Children using the blocking transport may return the same JSON object as their final
+       message. Unrecognized or invalid JSON remains ordinary text, preserving legacy reports.
 R-H7. `send_message_to_child` accepts only running direct children recorded in the parent's own
       thread registry. It calls `subagent_message` with the thread's name. Threads that have begun
       closing or are closed cannot receive messages; tell the caller to spawn a new thread.
