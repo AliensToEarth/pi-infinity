@@ -66,7 +66,27 @@ it, we only configure or wrap), SKIP (does not fit, reason given).
 | P13 | DELEGATE | pi print mode, tmux, and subagents cover it. |
 | P14 | ADOPT | Prompt guidance steers the model toward `fresh_context` threads for independent work and toward rate limited watch delivery for noisy streams. |
 
-### 1.4 Constraints from the local environment
+### 1.4 RLM research and decision
+
+The [RLM implementation](https://github.com/alexzhang13/rlm) keeps a large input in a
+persistent Python REPL and lets a root model inspect it with code and call submodels on
+selected pieces. Its [paper](https://arxiv.org/abs/2512.24601) reports gains on selected
+long-context benchmarks, not a guarantee for coding sessions. Subcalls add latency and cost,
+and model-generated code in a local REPL has the privileges of its host.
+
+Adopt the transferable workflow rather than another execution runtime: keep source material
+in files, delegate bounded portions to fresh-context threads, and synthesize reports with
+source locations. Existing pi tools already inspect files and existing threads run submodels.
+This is not an upstream RLM implementation: it has no persistent REPL context, automatic
+chunking, budget enforcement, or RLM benchmark results. Nested threads depend on the interactive
+transport. Add a dedicated runtime only if measurements on representative pi workloads justify
+its complexity and explicit security and resource boundaries.
+
+R-RLM1. The `spawn_thread` prompt guidance describes this workflow for large inputs, including
+source locations, bounded delegation, and verification of missing or failed portions. It must
+not claim complete coverage just because a child closed.
+
+### 1.5 Constraints from the local environment
 
 * pi 1.4.0 provides `@earendil-works/pi-coding-agent`, `@earendil-works/pi-ai`,
   `@earendil-works/pi-tui` and `typebox` to extensions. Nothing else is bundled.
