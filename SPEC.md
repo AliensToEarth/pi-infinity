@@ -82,6 +82,13 @@ chunking, budget enforcement, or RLM benchmark results. Nested threads depend on
 transport. Add a dedicated runtime only if measurements on representative pi workloads justify
 its complexity and explicit security and resource boundaries.
 
+Evaluation plan: use a held-out set of representative long-file questions with known answers
+and source locations. Compare direct search, ordinary threads, and any proposed RLM runtime
+with the same models and task inputs. Record answer accuracy, evidence coverage, missing or
+incorrect citations, total token cost, wall time and p95 latency, including failed runs. Test
+prompt-injection resistance separately. No such pi-infinity comparison has been run; the
+paper's benchmark numbers are not evidence of a gain here.
+
 R-RLM1. The `spawn_thread` prompt guidance describes this workflow for large inputs, including
 source locations, bounded delegation, and verification of missing or failed portions. It must
 not claim complete coverage just because a child closed.

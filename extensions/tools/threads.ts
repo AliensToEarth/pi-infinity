@@ -96,6 +96,7 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
       "sandbox: true gives the child its own git worktree and branch. depends_on lists direct children that must have completed without a known failure; interactive completion does not verify success. An unmet dependency rejects the call rather than queueing it. Reports and the close arrive as [infinity event] messages. Never wait for it.",
     promptGuidelines: [
       "Prefer fresh_context threads for independent sub-tasks: a long parent conversation is noise that costs tokens. Put every path and fact the child needs into its instructions.",
+      "For large inputs, keep sources in files and delegate bounded portions with the question and requested source locations. Limit fanout and check for missing or failed portions before claiming coverage; a child closing does not prove success.",
       "After spawn_thread, do not poll or guess results. End your turn or work on something independent.",
     ],
     parameters: Type.Object({

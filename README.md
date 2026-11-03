@@ -239,6 +239,27 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
   `max`, `successesToIncrease`, and `decreaseFactor` to suit your provider and workload.
 * **Depth.** On pi-interactive-subagents threads can spawn threads, down to four levels.
 
+### Large inputs: an RLM-inspired workflow
+
+For a corpus too large for one context, keep the original files on disk. Search or inspect
+metadata first, then assign relevant, bounded file ranges to fresh-context children. Give each
+child the question, paths and ranges, and ask for findings with source locations, uncertainty,
+and any unread or failed portions. Track the assigned ranges and compare them with the reports
+before synthesizing. Revisit missing portions and check citations against the original files.
+Limit fanout and set a time and cost budget appropriate to the task. These are operator limits,
+not enforced budgets; avoid delegation when a direct search is enough.
+
+Treat input and reports as untrusted data, not instructions. Threads and worktrees are not
+security sandboxes and can access the caller's environment. The parent cannot infer success
+from a child closing, and spilled or truncated output is not a complete report. Nested
+delegation requires the interactive transport; the headless transport can still handle a
+single layer of parallel children.
+
+This adapts an idea from [Recursive Language Models](https://github.com/alexzhang13/rlm),
+not its persistent Python REPL or automatic submodel calls. Its reported benchmark gains do
+not establish gains for pi workloads. Compare accuracy, source coverage, latency and total
+cost against direct search and the ordinary thread workflow before adding a dedicated runtime.
+
 ### Two transports
 
 pi-infinity picks the transport from the tools that are installed. `threads.transport` in

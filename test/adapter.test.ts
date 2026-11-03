@@ -93,6 +93,17 @@ test("R-G2 tool descriptions are short and carry the key guidance", async () => 
   assert.match(s.tools.get("spawn_thread").description, /fresh_context/);
 });
 
+test("R-RLM1 thread guidance calls for bounded, traceable delegation and coverage checks", async () => {
+  const s = await started();
+  const guidance = s.tools.get("spawn_thread").promptGuidelines.join(" ");
+  assert.match(guidance, /sources in files/);
+  assert.match(guidance, /bounded portions/);
+  assert.match(guidance, /source locations/);
+  assert.match(guidance, /Limit fanout/);
+  assert.match(guidance, /missing or failed portions/);
+  assert.match(guidance, /closing does not prove success/);
+});
+
 test("R-B1 R-B4 bash guard blocks long sleeps and sets a default timeout", async () => {
   const s = await started();
   const blocked = await s.emit("tool_call", { toolName: "bash", input: { command: "sleep 60" } }, s.ctx);
