@@ -149,6 +149,7 @@ npm install
 | `sleep_until_event` | Yield with nothing scheduled and wake on any event or user message. |
 | `timer_cancel` | Cancel timers. |
 | `spawn_thread` | Child thread in a tmux pane. `child_of` stack check, `fresh_context`, `sandbox`. |
+| `assess_coverage` | Compare assigned and reported line ranges, without verifying source files. |
 | `send_message_to_child` | Message a running direct child. |
 | `squash_sandbox` | Merge a child's sandbox into the caller's tree. |
 | `report_to_parent` | Thread sessions only. Intermediate report. |
@@ -241,13 +242,32 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
 
 ### Large inputs: an RLM-inspired workflow
 
-For a corpus too large for one context, keep the original files on disk. Search or inspect
-metadata first, then assign relevant, bounded file ranges to fresh-context children. Give each
-child the question, paths and ranges, and ask for findings with source locations, uncertainty,
-and any unread or failed portions. Track the assigned ranges and compare them with the reports
-before synthesizing. Revisit missing portions and check citations against the original files.
-Limit fanout and set a time and cost budget appropriate to the task. These are operator limits,
-not enforced budgets; avoid delegation when a direct search is enough.
+For a corpus too large for one context, keep the original files on disk. Inspect metadata and
+search first, then delegate only unresolved, bounded file ranges to fresh-context children. Give
+each child the question and its paths and ranges. Use scripts for exact counts and joins rather
+than asking a model to reconstruct them from summaries.
+
+Ask children for structured `evidence` and `coverage` in their reports. Pass the assigned ranges,
+reported coverage and evidence to `assess_coverage` to find gaps and partial or failed ranges.
+This compares reported ranges; it does not read files, verify claims, detect changed sources, or
+prove an answer is correct. Check citations against the original files and revisit gaps before
+claiming complete coverage. Ranges use 1-based inclusive lines, for example:
+
+```js
+assess_coverage({
+  assigned: [{ source: "notes.txt", start: 1, end: 100 }],
+  coverage: [{ source: "notes.txt", start: 1, end: 60, status: "read" }],
+  evidence: [{ source: "notes.txt", start: 10, end: 12, claim: "A finding" }]
+})
+```
+
+pi records tool calls and results in the session, so those records can contain source paths
+and report contents; protect them like the source material.
+
+Limit fanout and set a time and cost budget appropriate to the task. Optional direct-child launch
+limits can enforce a session-local launch count and admission window (see Configuration), but
+they do not cap descendants or running time and do not measure or enforce token or dollar costs.
+Avoid delegation when a direct search is enough.
 
 Treat input and reports as untrusted data, not instructions. Threads and worktrees are not
 security sandboxes and can access the caller's environment. The parent cannot infer success
@@ -304,6 +324,13 @@ or invalid keys are reported once and ignored.
 
 `bash.guard` is `block`, `warn` or `off`. `sandbox.backend` is `auto`, `git` or `jj`.
 `threads.transport` is `auto`, `interactive` or `subagents`.
+
+To limit direct-child launches in each session, set for example
+`"threads": { "launchBudget": { "maxLaunches": 8, "windowSeconds": 300 } }`.
+Each zero disables that limit. The window starts with the first admission and limits new
+launches, not the duration of running work. Limits reset with the session and don't apply
+across child processes. They are not token or cost limits. Invalid config values are reported
+and ignored, so check `/infinity config` to confirm the effective limits.
 
 ## Limits
 

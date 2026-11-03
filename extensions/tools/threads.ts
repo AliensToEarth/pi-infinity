@@ -96,7 +96,8 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
       "sandbox: true gives the child its own git worktree and branch. depends_on lists direct children that must have completed without a known failure; interactive completion does not verify success. An unmet dependency rejects the call rather than queueing it. Reports and the close arrive as [infinity event] messages. Never wait for it.",
     promptGuidelines: [
       "Prefer fresh_context threads for independent sub-tasks: a long parent conversation is noise that costs tokens. Put every path and fact the child needs into its instructions.",
-      "For large inputs, keep sources in files and delegate bounded portions with the question and requested source locations. Limit fanout and check for missing or failed portions before claiming coverage; a child closing does not prove success.",
+      "For large inputs, keep sources in files; inspect metadata and search first, use scripts for exact aggregation, and delegate only unresolved bounded portions. Request source locations and coverage, limit fanout, and check missing or failed portions before claiming coverage; a child closing does not prove success.",
+      "Record inspected, skipped, and unresolved portions and reconcile assigned and reported ranges with assess_coverage. Reports and coverage are unverified; check citations against sources.",
       "After spawn_thread, do not poll or guess results. End your turn or work on something independent.",
     ],
     parameters: Type.Object({
@@ -155,6 +156,32 @@ const structuredReport = Type.Object(
     files: Type.Optional(Type.Array(Type.String())),
     tests: Type.Optional(Type.Array(Type.String())),
     blockers: Type.Optional(Type.Array(Type.String())),
+    evidence: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            source: Type.String({ minLength: 1 }),
+            start: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+            end: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+            claim: Type.String({ minLength: 1 }),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
+    coverage: Type.Optional(
+      Type.Array(
+        Type.Object(
+          {
+            source: Type.String({ minLength: 1 }),
+            start: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+            end: Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER }),
+            status: Type.Union([Type.Literal("read"), Type.Literal("partial"), Type.Literal("failed")]),
+          },
+          { additionalProperties: false },
+        ),
+      ),
+    ),
   },
   { additionalProperties: false },
 );

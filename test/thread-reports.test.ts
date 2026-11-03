@@ -19,6 +19,54 @@ test("R-H6a validates reports and preserves unrecognized text", () => {
   assert.equal(renderReport("plain report"), "plain report");
 });
 
+test("R-RLM2 evidence and coverage round-trip as unverified claims", () => {
+  const report = {
+    summary: "Reviewed",
+    evidence: [{ source: "file.ts", start: 1, end: 1, claim: "A claim" }],
+    coverage: [
+      { source: "file.ts", start: 1, end: 10, status: "read" },
+      { source: "file.ts", start: 11, end: 12, status: "partial" },
+      { source: "other", start: 2, end: 3, status: "failed" },
+    ],
+  };
+  const encoded = encodeReport(undefined, report, true)!;
+  assert.deepEqual(JSON.parse(encoded), report);
+  assert.equal(
+    renderReport(encoded),
+    "Reviewed\nEvidence (unverified): file.ts:1-1: A claim\nCoverage (unverified): file.ts:1-10: read\nCoverage (unverified): file.ts:11-12: partial\nCoverage (unverified): other:2-3: failed",
+  );
+  assert.equal(renderReport(encodeReport(undefined, { summary: "Old", evidence: [], coverage: [] }, true)!), "Old");
+});
+
+test("R-RLM2 rejects invalid entries and preserves unrecognized reports", () => {
+  const entry = { source: "file", start: 1, end: 2, claim: "claim" };
+  const invalid = [
+    { ...entry, source: " " },
+    { ...entry, claim: " " },
+    { ...entry, start: 0 },
+    { ...entry, start: 1.5 },
+    { ...entry, end: Number.MAX_SAFE_INTEGER + 1 },
+    { ...entry, start: 3 },
+    { ...entry, extra: true },
+    null,
+  ];
+  for (const item of invalid) {
+    const value = { summary: "x", evidence: [item] };
+    assert.throws(() => encodeReport(undefined, value, true), /Invalid structured/);
+    assert.equal(renderReport(JSON.stringify(value)), JSON.stringify(value));
+  }
+  for (const coverage of [
+    null,
+    {},
+    [{ source: "x", start: 1, end: 2, status: "unknown" }],
+    [{ source: "x", start: -1, end: 2, status: "read" }],
+  ]) {
+    const value = { summary: "x", coverage };
+    assert.throws(() => encodeReport(undefined, value, true), /Invalid structured/);
+    assert.equal(renderReport(JSON.stringify(value)), JSON.stringify(value));
+  }
+});
+
 test("R-H6a structured reports preserve Unicode and escaped text; malformed or mismatched JSON stays literal", () => {
   const summary = 'Done: β, ✓, "quoted"\nnext line';
   const encoded = encodeReport(undefined, { summary, files: ["目录/a.ts", "space name.ts"], blockers: ["one, two"] }, true)!;

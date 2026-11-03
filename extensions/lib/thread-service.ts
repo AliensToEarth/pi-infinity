@@ -83,6 +83,9 @@ export class ThreadService {
   private readonly d: ThreadServiceDeps;
   private readonly now: () => number;
   private readonly concurrency: AdaptiveConcurrency;
+  private launches = 0;
+  private launchReservations = 0;
+  private launchWindowStart: number | undefined;
 
   constructor(d: ThreadServiceDeps) {
     this.d = d;
@@ -140,16 +143,44 @@ export class ThreadService {
       );
     }
 
-    this.concurrency.acquire();
+    this.reserveLaunch();
+    let acquired = false;
+    let launched = false;
     try {
-      return await this.spawnReserved(p, io, transport);
+      this.concurrency.acquire();
+      acquired = true;
+      return await this.spawnReserved(p, io, transport, () => {
+        launched = true;
+        this.launchReservations--;
+        this.launches++;
+      });
     } catch (err) {
-      this.concurrency.complete("error");
+      if (!launched) this.launchReservations--;
+      if (this.launches === 0 && this.launchReservations === 0) this.launchWindowStart = undefined;
+      if (acquired) this.concurrency.complete("error");
       throw err;
     }
   }
 
-  private async spawnReserved(p: SpawnParams, io: ThreadIO, transport: "interactive" | "subagents"): Promise<{ id: string; text: string }> {
+  private reserveLaunch(): void {
+    const { maxLaunches, windowSeconds } = this.d.config.threads.launchBudget;
+    const now = this.now();
+    if (maxLaunches > 0 && this.launches + this.launchReservations >= maxLaunches) {
+      throw new Error("Thread launch budget exhausted: maximum launches reached for this session.");
+    }
+    if (windowSeconds > 0 && this.launchWindowStart !== undefined && now - this.launchWindowStart >= windowSeconds * 1000) {
+      throw new Error("Thread launch budget exhausted: admission window has ended for this session.");
+    }
+    this.launchWindowStart ??= now;
+    this.launchReservations++;
+  }
+
+  private async spawnReserved(
+    p: SpawnParams,
+    io: ThreadIO,
+    transport: "interactive" | "subagents",
+    onLaunched: () => void,
+  ): Promise<{ id: string; text: string }> {
     const id = newThreadId();
     const stack = [...this.d.identity.stack, id];
     const fresh = p.fresh_context === true;
@@ -182,6 +213,11 @@ export class ThreadService {
       ...(transport === "subagents" ? { transport } : {}),
     };
     let detached: DetachedLaunch | undefined;
+    let launched = false;
+    const markLaunched = () => {
+      launched = true;
+      onLaunched();
+    };
     try {
       const task = frameTask({
         id,
@@ -194,15 +230,17 @@ export class ThreadService {
       if (transport === "subagents") {
         if (!io.launchDetached) throw new Error("bug: the subagents transport needs launchDetached");
         detached = io.launchDetached({ id, task, cwd: sandbox?.path, model: p.model });
+        markLaunched();
       } else {
         this.d.files.write(record);
         const launched = await io.launch({ agent: fresh ? AGENT_FRESH : AGENT_FORK, task, name: id, cwd: sandbox?.path, model: p.model });
+        markLaunched();
         if (launched.sessionFile) record.sessionFile = launched.sessionFile;
         if (!this.disposed) this.d.files.write(record);
       }
     } catch (err) {
       this.d.files.remove(id);
-      if (sandbox && backend) await this.cleanupSandbox(backend, sandbox);
+      if (!launched && sandbox && backend) await this.cleanupSandbox(backend, sandbox);
       throw err;
     }
 

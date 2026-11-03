@@ -103,8 +103,13 @@ ranges are rejected. It does not read the source or verify reports, and coverage
 about correctness. Duplicate and overlapping read ranges must not hide gaps.
 R-RLM4. Optional session-local direct-child launch limits cap the total launches and admission
 window, in addition to existing concurrency and depth limits. Limits are enforced before launch,
-including concurrent calls, and failures release reservations. Limits reset on session restart;
-they do not cap descendants, stop running children, or measure model tokens or cost.
+including concurrent calls. Failures before launch release reservations; a child that started
+counts even if later bookkeeping fails. Limits reset on session restart; they do not cap
+descendants, stop running children, or measure model tokens or cost.
+R-RLM5. Prompt guidance asks the model to record inspected, skipped, and unresolved portions
+and use `assess_coverage` for reconciliation. Pi's normal session history records tool calls
+and results when a session is persisted; no separate telemetry is sent or audit log promised.
+Session files can contain source paths and claims and must be protected accordingly.
 
 ### 1.5 Constraints from the local environment
 

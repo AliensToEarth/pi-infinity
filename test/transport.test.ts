@@ -293,12 +293,20 @@ test("R-X3 R-X6 spawn returns at once, the close event carries the final output,
   assert.equal(d.svc.hasClosed(id), true);
 });
 
-test("R-H6a blocking structured final report is rendered in the close event", async () => {
+test("R-H6a R-RLM2 blocking structured final report is rendered in the close event", async () => {
   const d = detached();
   await d.svc.spawn({ instructions: "x", child_of: ["root"], fresh_context: true }, d.io);
-  d.resolve({ output: JSON.stringify({ summary: "Done", files: ["a.ts"], blockers: ["none"] }), isError: false });
+  d.resolve({
+    output: JSON.stringify({
+      summary: "Done",
+      files: ["a.ts"],
+      blockers: ["none"],
+      evidence: [{ source: "a.ts", start: 1, end: 2, claim: "finding" }],
+    }),
+    isError: false,
+  });
   await new Promise((r) => setTimeout(r, 20));
-  assert.match(d.sent[0].content, /Done\nFiles: a.ts\nBlockers: none/);
+  assert.match(d.sent[0].content, /Done\nFiles: a.ts\nBlockers: none\nEvidence \(unverified\): a.ts:1-2: finding/);
 });
 
 test("R-X6 an error outcome is labeled", async () => {

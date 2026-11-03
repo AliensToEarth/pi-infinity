@@ -6,6 +6,7 @@ import { registerEventRenderer } from "./render.ts";
 import { agentDir, createRuntime, type Runtime } from "./runtime.ts";
 import { registerWithSubagents } from "./subagents-bridge.ts";
 import { childTools, spawnerTools } from "./tools/threads.ts";
+import { coverageTools } from "./tools/coverage.ts";
 import { jobTools } from "./tools/jobs.ts";
 import { timerTools } from "./tools/timers.ts";
 import type { ToolDef } from "./tools/types.ts";
@@ -25,7 +26,13 @@ export default function piInfinity(pi: ExtensionAPI): void {
     return svc;
   };
   const inThread = identify(process.env, new ThreadFiles(agentDir())).id !== "root";
-  const tools: ToolDef[] = [...jobTools(rt), ...timerTools(rt), ...spawnerTools(threadSvc), ...(inThread ? childTools(threadSvc) : [])];
+  const tools: ToolDef[] = [
+    ...jobTools(rt),
+    ...timerTools(rt),
+    ...spawnerTools(threadSvc),
+    ...coverageTools(),
+    ...(inThread ? childTools(threadSvc) : []),
+  ];
   for (const tool of tools) pi.registerTool(tool);
   registerEventRenderer(pi);
 

@@ -13,6 +13,7 @@ export interface InfinityConfig {
     enabled: boolean;
     maxDepth: number;
     transport: "auto" | "interactive" | "subagents";
+    launchBudget: { maxLaunches: number; windowSeconds: number };
     adaptiveConcurrency: {
       enabled: boolean;
       min: number;
@@ -35,6 +36,7 @@ export const DEFAULT_CONFIG: InfinityConfig = {
     enabled: true,
     maxDepth: 4,
     transport: "auto",
+    launchBudget: { maxLaunches: 0, windowSeconds: 0 },
     adaptiveConcurrency: { enabled: false, min: 1, initial: 2, max: 8, successesToIncrease: 3, decreaseFactor: 0.5 },
   },
   sandbox: { root: ".pi/sandboxes", autoCommit: true, backend: "auto" },
@@ -73,6 +75,10 @@ export function mergeConfig<T extends Json>(base: T, override: unknown, path: st
         problems.push(`${here}: must be auto, interactive or subagents`);
       } else if (key === "backend" && !["auto", "git", "jj"].includes(value as string)) {
         problems.push(`${here}: must be auto, git or jj`);
+      } else if (here === "threads.launchBudget.maxLaunches" && (!Number.isSafeInteger(value) || (value as number) < 0)) {
+        problems.push(`${here}: must be a non-negative safe integer`);
+      } else if (here === "threads.launchBudget.windowSeconds" && (value as number) > Number.MAX_SAFE_INTEGER / 1000) {
+        problems.push(`${here}: exceeds the supported duration`);
       } else if (typeof value === "number" && (!Number.isFinite(value) || value < 0)) {
         problems.push(`${here}: must be a non-negative number`);
       } else {

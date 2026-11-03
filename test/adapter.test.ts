@@ -72,6 +72,7 @@ const EXPECTED_ROOT_TOOLS = [
   "sleep_until_event",
   "timer_cancel",
   "spawn_thread",
+  "assess_coverage",
   "send_message_to_child",
   "squash_sandbox",
 ];
@@ -98,10 +99,29 @@ test("R-RLM1 thread guidance calls for bounded, traceable delegation and coverag
   const guidance = s.tools.get("spawn_thread").promptGuidelines.join(" ");
   assert.match(guidance, /sources in files/);
   assert.match(guidance, /bounded portions/);
+  assert.match(guidance, /inspect metadata and search first/);
+  assert.match(guidance, /scripts for exact aggregation/);
   assert.match(guidance, /source locations/);
-  assert.match(guidance, /Limit fanout/);
+  assert.match(guidance, /limit fanout/);
   assert.match(guidance, /missing or failed portions/);
   assert.match(guidance, /closing does not prove success/);
+});
+
+test("R-RLM3 registered coverage tool compares ranges without accessing files", async () => {
+  const s = await started();
+  const result = await s.tools.get("assess_coverage").execute("coverage", {
+    assigned: [{ source: "missing.txt", start: 1, end: 10 }],
+    coverage: [{ source: "missing.txt", start: 1, end: 4, status: "read" }],
+  });
+  assert.deepEqual(result.details.missing, [{ source: "missing.txt", start: 5, end: 10 }]);
+});
+
+test("R-RLM5 guidance records the inspection trail and reconciles unverified reports", async () => {
+  const s = await started();
+  const guidance = s.tools.get("spawn_thread").promptGuidelines.join(" ");
+  assert.match(guidance, /inspected, skipped, and unresolved/);
+  assert.match(guidance, /assess_coverage/);
+  assert.match(guidance, /check citations against sources/);
 });
 
 test("R-B1 R-B4 bash guard blocks long sleeps and sets a default timeout", async () => {
