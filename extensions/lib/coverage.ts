@@ -56,6 +56,11 @@ export function assessCoverage(input: unknown): CoverageAssessment {
   const evidenceInput = (obj.evidence ?? []) as unknown[];
   if (obj.assigned.length + obj.coverage.length + evidenceInput.length > MAX_COVERAGE_ENTRIES)
     throw new Error(`At most ${MAX_COVERAGE_ENTRIES} total entries are allowed`);
+  for (const array of [obj.assigned, obj.coverage, evidenceInput]) {
+    for (let i = 0; i < array.length; i++) {
+      if (!Object.hasOwn(array, i)) throw new Error("Sparse arrays are not allowed");
+    }
+  }
   const assigned = obj.assigned.map((item) => entry(item, "assigned") as Range);
   const coverage = obj.coverage.map((item) => entry(item, "coverage") as Coverage);
   const evidence = evidenceInput.map((item) => entry(item, "evidence") as Evidence);

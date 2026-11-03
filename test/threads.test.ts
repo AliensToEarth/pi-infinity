@@ -140,6 +140,7 @@ interface Harness {
   repo: string;
   messages: Array<[string, string]>;
   sessionDir: string;
+  logger: ReturnType<typeof memoryLogger>;
 }
 
 function git(cwd: string, ...args: string[]): string {
@@ -182,8 +183,55 @@ function harness(opts: { confirm?: boolean } = {}): Harness {
     sendToChild: async (n, m) => void messages.push([n, m]),
     confirm: opts.confirm ? async () => true : undefined,
   };
-  return { svc, sent, launches, io, files, repo, messages, sessionDir };
+  return { svc, sent, launches, io, files, repo, messages, sessionDir, logger };
 }
+
+test("R-H12 exit before launch resolves drains reports and closes once", async () => {
+  const h = harness();
+  let resolve!: (result: { sessionFile: string }) => void;
+  let id = "";
+  const pending = h.svc.spawn(
+    { instructions: "x", child_of: ["root"] },
+    {
+      ...h.io,
+      launch: (args) => {
+        id = args.name;
+        return new Promise((r) => {
+          resolve = r;
+        });
+      },
+    },
+  );
+  const sessionFile = join(h.sessionDir, `${id}.jsonl`);
+  appendInbox(inboxPath(sessionFile), { type: "report", seq: 0, text: "early report", at: 1 });
+  appendInbox(inboxPath(sessionFile), { type: "closed", seq: 1, text: "early close", at: 2 });
+  await h.svc.childExited(id);
+  resolve({ sessionFile });
+  const result = await pending;
+  assert.equal(result.id, id);
+  await until(() => h.svc.hasClosed(id));
+  assert.equal(h.sent.filter((m) => m.details.kind === "child_report").length, 1);
+  assert.equal(h.sent.filter((m) => m.details.kind === "child_closed").length, 1);
+  assert.match(h.sent.find((m) => m.details.kind === "child_closed")!.content, /early close/);
+  h.svc.dispose();
+});
+
+test("R-H12 post-launch record failure keeps child tracked and reports available", async () => {
+  const h = harness();
+  const write = h.files.write.bind(h.files);
+  let writes = 0;
+  h.files.write = (record) => {
+    if (++writes === 2) throw new Error("injected write failure");
+    write(record);
+  };
+  const child = await h.svc.spawn({ instructions: "x", child_of: ["root"] }, h.io);
+  assert.equal(h.svc.runningCount(), 1);
+  assert.ok(h.logger.lines.some((line) => line.includes("injected write failure")));
+  appendInbox(inboxPath(join(h.sessionDir, `${child.id}.jsonl`)), { type: "closed", seq: 0, text: "retained", at: 1 });
+  await h.svc.childExited(child.id);
+  assert.match(h.sent.find((m) => m.details.kind === "child_closed")!.content, /retained/);
+  h.svc.dispose();
+});
 
 test("R-H1 spawn rejects a stack mismatch before launching anything", async () => {
   const h = harness();
@@ -368,7 +416,7 @@ test("R-S5 declined confirmation changes nothing", async () => {
   assert.equal(git(h.repo, "diff", "--cached", "--name-only"), "");
 });
 
-test("R-S6 conflict surfaces the path and leaves the target clean", async () => {
+test("R-S6 conflict surfaces the path and preserves the sandbox for manual recovery", async () => {
   const h = harness();
   const a = await h.svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, h.io);
   const b = await h.svc.spawn({ instructions: "y", child_of: ["root"], sandbox: true }, h.io);
@@ -380,7 +428,7 @@ test("R-S6 conflict surfaces the path and leaves the target clean", async () => 
   await h.svc.squash(a.id, { commit: true }, io);
   git(h.repo, "-c", "core.hooksPath=/dev/null", "-c", "user.name=t", "-c", "user.email=t@example.org", "commit", "-q", "-m", "take a");
   await assert.rejects(h.svc.squash(b.id, {}, io), /conflicts in: a\.txt/);
-  assert.equal(git(h.repo, "status", "--porcelain"), "");
+  assert.match(git(h.repo, "status", "--porcelain"), /UU a\.txt/);
   assert.match(git(h.repo, "branch", "--list", `sandbox-${b.id}`), /sandbox-t-/);
 });
 
@@ -409,6 +457,11 @@ test("R-S7 listing and pruning sandboxes", async () => {
   assert.match(await h.svc.pruneSandboxes(io), /refused.*not committed/);
   git(h.repo, "-c", "core.hooksPath=/dev/null", "commit", "-q", "-m", "apply child work");
   assert.match(await h.svc.listSandboxes(h.repo), /merged/);
+  assert.match(await h.svc.pruneSandboxes(io), /no eligible/);
+  git(h.repo, "reset", "--hard", "HEAD~1");
+  assert.match(await h.svc.pruneSandboxes(io), /no eligible/);
+  assert.equal(git(h.repo, "show", `sandbox-${id}:b.txt`).trim(), "x");
+  git(h.repo, "merge", "--ff-only", `sandbox-${id}`);
   assert.match(await h.svc.pruneSandboxes(io), /deleted 1/);
   assert.equal(git(h.repo, "branch", "--list", "sandbox-*"), "");
   assert.equal(await h.svc.pruneSandboxes({ ...h.io, confirm: undefined }), "pruning needs a UI to confirm");

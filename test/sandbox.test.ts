@@ -70,6 +70,16 @@ test("R-S1 create builds an isolated worktree on a sandbox branch", async (t) =>
   assert.equal(readFileSync(join(repo, "file.txt"), "utf8"), "base\n");
 });
 
+test("R-S5 removal preserves ignored sandbox files", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, ".gitignore", "private.txt\n", "initial commit");
+  const b = backend();
+  const sb = await b.create({ cwd: repo, id: "ignored" });
+  writeFileSync(join(sb.path, "private.txt"), "valuable");
+  await assert.rejects(b.remove(sb, { keepBranch: true }), /ignored files/);
+  assert.equal(readFileSync(join(sb.path, "private.txt"), "utf8"), "valuable");
+});
+
 test("R-S1 validateSandboxId rejects traversal and malformed ids", () => {
   const bad = ["", "..", ".", "../escape", "a/b", "a\\b", "a b", "-lead", "_lead", "x".repeat(42)];
   for (const id of bad) assert.throws(() => validateSandboxId(id), Error, `id ${JSON.stringify(id)}`);
@@ -295,7 +305,7 @@ test("R-S5 a second child squashed after the first works when files differ", asy
   assert.equal(readFileSync(join(repo, "two.txt"), "utf8"), "two\n");
 });
 
-test("R-S6 conflicts abort the squash and leave the target and child branch intact", async (t) => {
+test("R-S6 conflicts preserve the failed squash for manual recovery and leave the child branch intact", async (t) => {
   const repo = await initRepo(t);
   await commitFile(repo, "shared.txt", "base\n", "initial commit");
   const b = backend();
@@ -312,14 +322,32 @@ test("R-S6 conflicts abort the squash and leave the target and child branch inta
     assert.fail("expected the second squash to conflict");
   } else {
     assert.deepEqual(res.conflicts, ["shared.txt"]);
+    assert.match(res.error ?? "", /manual recovery/);
   }
-  // The target is back to its pre-squash state: clean and at the first child's version.
-  assert.equal((await xgit(repo, ["status", "--porcelain"])).trim(), "");
-  assert.equal(readFileSync(join(repo, "shared.txt"), "utf8"), "one\n");
+  assert.match(await xgit(repo, ["status", "--porcelain"]), /UU shared\.txt/);
   // The second child and its branch are untouched.
   assert.equal(readFileSync(join(c2.path, "shared.txt"), "utf8"), "two\n");
   assert.equal((await xgit(repo, ["rev-parse", "sandbox-second"])).trim(), (await xgit(c2.path, ["rev-parse", "HEAD"])).trim());
   assert.notEqual((await xgit(repo, ["rev-parse", "sandbox-second"])).trim(), (await xgit(repo, ["rev-parse", "HEAD"])).trim());
+});
+
+test("R-S6 failed merge preserves a concurrent user edit", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial");
+  const sb = await backend().create({ cwd: repo, id: "concurrent" });
+  const bin = tempDir(t);
+  const realGit = (await exec("which", ["git"], { encoding: "utf8" })).stdout.trim();
+  const wrapper = join(bin, "git");
+  writeFileSync(
+    wrapper,
+    '#!/bin/sh\nif [ "$1" = merge ]; then\n  printf "concurrent edit\\n" > file.txt\n  echo "merge failed" >&2\n  exit 1\nfi\nexec "$REAL_GIT" "$@"\n',
+  );
+  chmodSync(wrapper, 0o755);
+  const b = new GitSandbox(memoryLogger(), { ...GIT_ENV, PATH: `${bin}:${process.env.PATH}`, REAL_GIT: realGit });
+  const result = await b.squashInto(repo, sb, { commit: false });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error ?? "", /manual recovery/);
+  assert.equal(readFileSync(join(repo, "file.txt"), "utf8"), "concurrent edit\n");
 });
 
 test("R-S5 squash refuses a target with uncommitted changes", async (t) => {
@@ -353,6 +381,31 @@ test("R-S5 squash refuses to overwrite ignored target files", async (t) => {
   assert.equal(result.ok, false);
   assert.equal(readFileSync(join(repo, "secret.txt"), "utf8"), "valuable ignored file\n");
   assert.equal(readFileSync(join(sb.path, "secret.txt"), "utf8"), "sandbox version\n");
+});
+
+test("R-S5 and R-S7 refuse to squash or remove a dirty sandbox", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial");
+  const b = backend();
+  const sb = await b.create({ cwd: repo, id: "dirty" });
+  writeFileSync(join(sb.path, "file.txt"), "unstaged\n");
+  writeFileSync(join(sb.path, "new.txt"), "untracked\n");
+  const result = await b.squashInto(repo, sb, { commit: false });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.match(result.error ?? "", /dirty sandbox/);
+  await assert.rejects(b.remove(sb, { keepBranch: true }));
+  assert.equal(readFileSync(join(sb.path, "file.txt"), "utf8"), "unstaged\n");
+  assert.equal(readFileSync(join(sb.path, "new.txt"), "utf8"), "untracked\n");
+});
+
+test("R-S7 prune refuses unstaged changes in another worktree", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial");
+  const b = backend();
+  const sb = await b.create({ cwd: repo, id: "dirty-other" });
+  writeFileSync(join(sb.path, "file.txt"), "unstaged\n");
+  await assert.rejects(b.pruneMerged(repo), /uncommitted changes/);
+  assert.equal(readFileSync(join(sb.path, "file.txt"), "utf8"), "unstaged\n");
 });
 
 test("R-S7 remove deletes the worktree and optionally the branch", async (t) => {
@@ -413,7 +466,7 @@ test("R-S7 pruneMerged deletes merged branches without a worktree", async (t) =>
   for (const sb of [a, c]) {
     writeFileSync(join(sb.path, `${sb.id}.txt`), "x\n");
     await b.commitAll(sb, `thread ${sb.id}`);
-    assert.equal((await b.squashInto(repo, sb, { commit: true })).ok, true);
+    await xgit(repo, ["merge", "--no-ff", "-m", `merge ${sb.id}`, sb.branch]);
     await b.remove(sb, { keepBranch: true });
   }
   // b still has a worktree, so it survives even though its branch is merged.
@@ -421,6 +474,47 @@ test("R-S7 pruneMerged deletes merged branches without a worktree", async (t) =>
   assert.deepEqual(deleted, ["sandbox-a", "sandbox-c"]);
   await assert.rejects(xgit(repo, ["rev-parse", "--verify", "refs/heads/sandbox-a"]));
   await xgit(repo, ["rev-parse", "--verify", `refs/heads/${kept.branch}`]);
+});
+
+test("R-S7 squash marker cannot authorize prune after reset", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial");
+  const b = backend();
+  const sb = await b.create({ cwd: repo, id: "reset" });
+  writeFileSync(join(sb.path, "feature.txt"), "feature\n");
+  await b.commitAll(sb, "feature");
+  assert.equal((await b.squashInto(repo, sb, { commit: true })).ok, true);
+  await b.remove(sb, { keepBranch: true });
+  assert.equal((await b.list(repo))[0].merged, true);
+  assert.deepEqual(await b.pruneMerged(repo), []);
+  await xgit(repo, ["reset", "--hard", sb.base]);
+  assert.equal((await b.list(repo))[0].merged, true);
+  assert.deepEqual(await b.pruneMerged(repo), []);
+  assert.equal((await xgit(repo, ["show", `${sb.branch}:feature.txt`])).trim(), "feature");
+});
+
+test("R-S7 prune atomically refuses a branch moved after inspection", async (t) => {
+  const repo = await initRepo(t);
+  await commitFile(repo, "file.txt", "base\n", "initial");
+  const b = backend();
+  const sb = await b.create({ cwd: repo, id: "race-prune" });
+  writeFileSync(join(sb.path, "feature.txt"), "feature\n");
+  await b.commitAll(sb, "feature");
+  await xgit(repo, ["merge", "--ff-only", sb.branch]);
+  await b.remove(sb, { keepBranch: true });
+  await commitFile(repo, "later.txt", "later\n", "later");
+  const later = (await xgit(repo, ["rev-parse", "HEAD"])).trim();
+  const bin = tempDir(t);
+  const realGit = (await exec("which", ["git"], { encoding: "utf8" })).stdout.trim();
+  const wrapper = join(bin, "git");
+  writeFileSync(
+    wrapper,
+    '#!/bin/sh\nif [ "$1" = update-ref ] && [ "$2" = -d ]; then\n  "$REAL_GIT" update-ref "$3" "$RACE_SHA" || exit $?\nfi\nexec "$REAL_GIT" "$@"\n',
+  );
+  chmodSync(wrapper, 0o755);
+  const racing = new GitSandbox(memoryLogger(), { ...GIT_ENV, PATH: `${bin}:${process.env.PATH}`, REAL_GIT: realGit, RACE_SHA: later });
+  await assert.rejects(racing.pruneMerged(repo), /update-ref/);
+  assert.equal((await xgit(repo, ["rev-parse", sb.branch])).trim(), later);
 });
 
 test("R-S1 a sandbox created from inside a sandbox lives under the main root", async (t) => {

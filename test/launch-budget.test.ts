@@ -37,6 +37,7 @@ function setup(maxLaunches = 0, windowSeconds = 0) {
     io,
     params,
     files,
+    config,
     setTime: (n: number) => {
       now = n;
     },
@@ -84,9 +85,30 @@ test("R-RLM4 a bookkeeping failure after launch still consumes the launch budget
     if (++writes === 2) throw new Error("bookkeeping failed");
     write(record);
   };
-  await assert.rejects(svc.spawn(h.params, h.io), /bookkeeping failed/);
+  const child = await svc.spawn(h.params, h.io);
+  assert.equal(svc.runningCount(), 1);
+  await svc.childExited(child.id);
   await assert.rejects(svc.spawn(h.params, h.io), /maximum launches/);
   assert.equal(h.calls(), 1);
+  svc.dispose();
+});
+
+test("R-H12 bookkeeping failure retains adaptive concurrency until child closes", async () => {
+  const h = setup();
+  h.config.threads.adaptiveConcurrency.enabled = true;
+  h.config.threads.adaptiveConcurrency.initial = 1;
+  h.config.threads.adaptiveConcurrency.min = 1;
+  const svc = h.create();
+  const write = h.files.write.bind(h.files);
+  let writes = 0;
+  h.files.write = (record) => {
+    if (++writes === 2) throw new Error("bookkeeping failed");
+    write(record);
+  };
+  const child = await svc.spawn(h.params, h.io);
+  await assert.rejects(svc.spawn(h.params, h.io), /concurrency limit/);
+  await svc.childExited(child.id);
+  await svc.spawn(h.params, h.io);
   svc.dispose();
 });
 

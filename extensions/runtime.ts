@@ -131,7 +131,7 @@ export function createRuntime(pi: ExtensionAPI, ctx: ExtensionContext): Runtime 
     fire: (timer, lateMs) => {
       emitter.emit(timerEvent(timer, timer.dueAt + lateMs));
     },
-    newId: () => `timer-${randomBytes(3).toString("hex")}`,
+    newId: () => `timer-${randomBytes(16).toString("hex")}`,
     max: config.timers.max,
     logger,
   });

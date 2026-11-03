@@ -86,6 +86,30 @@ test("R-J2 and R-J8 cancel kills the whole process group and is idempotent", asy
   assert.equal(exits(events).length, 1);
 });
 
+test("R-J8 repeated cancel, cancelAll and timeout send SIGTERM only once", async () => {
+  const child = Object.assign(new EventEmitter(), { pid: 12345, stdout: new PassThrough(), stderr: new PassThrough() });
+  const signals: string[] = [];
+  const events: EventInput[] = [];
+  const mgr = new JobManager({
+    emit: (event) => void events.push(event),
+    logDir: mkdtempSync(join(tmpdir(), "pi-inf-jobs-")),
+    config: DEFAULT_CONFIG.jobs,
+    logger: memoryLogger(),
+    spawn: () => child as unknown as ChildProcess,
+    killGroup: (_pid, signal) => void signals.push(signal),
+    killGraceMs: 80,
+    closeGraceMs: 10,
+  });
+  const job = mgr.start({ command: "fake", cwd: tmpdir(), timeoutSeconds: 0.02 });
+  assert.equal(mgr.cancel(job.id).alreadyFinished, false);
+  assert.equal(mgr.cancel(job.id).alreadyFinished, false);
+  mgr.cancelAll();
+  await until(() => signals.includes("SIGKILL"));
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  child.emit("exit", null, "SIGKILL");
+  await until(() => exits(events).length === 1);
+});
+
 test("R-J8 SIGKILL follows when SIGTERM is ignored", async () => {
   const { mgr, events } = setup();
   const job = mgr.start({ command: "trap '' TERM; while true; do sleep 1; done", cwd: tmpdir() });
@@ -100,22 +124,12 @@ test("R-J8 escalation kills a descendant that ignores TERM after the shell exits
   const marker = join(dir, "escaped");
   const script = `process.on('SIGTERM', () => {}); console.log('ready'); setTimeout(() => require('fs').writeFileSync(${JSON.stringify(marker)}, 'escaped'), 1200)`;
   const job = mgr.start({ command: `node -e ${JSON.stringify(script)} & wait`, cwd: tmpdir() });
-  try {
-    await until(() => mgr.output(job.id, {}).text.includes("ready"));
-    mgr.cancel(job.id);
-    await until(() => job.status !== "running");
-    assert.equal(job.signal, "SIGTERM", "the shell must exit before escalation");
-    await new Promise((r) => setTimeout(r, 1600));
-    assert.equal(existsSync(marker), false, "descendant survived the group cancellation");
-  } finally {
-    if (job.pid !== undefined) {
-      try {
-        process.kill(-job.pid, "SIGKILL");
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== "ESRCH") throw err;
-      }
-    }
-  }
+  await until(() => mgr.output(job.id, {}).text.includes("ready"));
+  mgr.cancel(job.id);
+  await until(() => job.status !== "running");
+  assert.equal(job.signal, "SIGTERM", "the shell must exit before escalation");
+  await new Promise((r) => setTimeout(r, 1600));
+  assert.equal(existsSync(marker), false, "descendant survived the group cancellation");
 });
 
 test("R-J8 unknown id is an error value for the adapter to report", () => {
@@ -191,8 +205,8 @@ test("R-J4 timeout stops at shell exit while output pipes remain open", async ()
   await until(() => exits(events).length === 1);
   assert.equal(job.status, "exited");
   assert.deepEqual(signals, []);
-  child.stdout.destroy();
-  child.stderr.destroy();
+  assert.equal(child.stdout.destroyed, true);
+  assert.equal(child.stderr.destroyed, true);
 });
 
 test("R-J5 long unterminated lines are bounded and counted once", () => {

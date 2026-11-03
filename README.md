@@ -225,8 +225,9 @@ spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, san
   committed there and the event shows the diff stat.
 * **Merging back.** `squash_sandbox` merges the branch into the caller's tree. In your main
   session the changes are only staged (git) or left in the working-copy change (jj), and you
-  confirm first. Inside a sandboxed thread the result is committed. A conflict aborts the
-  squash and leaves both sides unchanged.
+  confirm first. Inside a sandboxed thread the result is committed. On conflict the sandbox
+  is preserved; the target may need manual recovery. Git removal refuses to discard ignored
+  files. Automatic jj bookmark pruning is disabled to avoid deleting work moved concurrently.
 * **Dependencies.** `depends_on: ["t-..."]` requires direct children to have closed without
   a known failure. Unmet dependencies reject the spawn; they are not queued. Interactive child
   completion does not prove its task succeeded, so inspect its report first. Dependencies are
@@ -307,7 +308,7 @@ Your main session is never moved into a sandbox. It is your own working director
 | `/infinity` | Jobs, timers and threads |
 | `/infinity cancel <id\|all>` | Cancel a job or timer |
 | `/infinity sandboxes` | List sandbox branches |
-| `/infinity prune` | Delete merged sandbox branches after confirmation |
+| `/infinity prune` | Delete git sandbox branches reachable from HEAD after confirmation; squashed branches and jj bookmarks may require manual deletion |
 | `/infinity config` | Show the effective configuration |
 
 A status line shows the number of running jobs, pending timers and threads.
@@ -334,7 +335,8 @@ and ignored, so check `/infinity config` to confirm the effective limits.
 
 ## Limits
 
-* Running jobs end with the session. They are not resumed after a restart. Timers are.
+* Running job shells are cancelled when the session ends and are not resumed. Descendants of
+  an already-exited shell may survive; timers are resumed.
 * Threads need pi-interactive-subagents (and tmux) or pi-subagents. On pi-subagents there are
   no live reports, no messaging and no forked context, see the transport table.
 * On pi-interactive-subagents a closing child wakes the parent twice, once for the close event

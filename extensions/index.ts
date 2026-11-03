@@ -88,10 +88,10 @@ export default function piInfinity(pi: ExtensionAPI): void {
 
   // R-O1 to R-O3.
   pi.on("tool_result", (event) => {
-    if (!runtime || event.toolName === "read" || event.structuredContent !== undefined) return;
+    if (!runtime || event.toolName === "read") return;
     const rt0 = runtime;
     const replaced = guardContent(event.content as Part[], rt0.spillDir, rt0.config.overflow, (err) => rt0.logger.error("overflow", err));
-    if (replaced) return { content: replaced as never };
+    if (replaced) return { content: replaced as never, structuredContent: event.structuredContent };
   });
 
   // B-4, B-5. The subagents extension sends its own exit message for every child. Close the

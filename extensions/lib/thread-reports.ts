@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from "node:util";
+
 export interface Evidence {
   source: string;
   start: number;
@@ -34,6 +36,13 @@ function validEntry(value: unknown, kind: "evidence" | "coverage"): boolean {
     : entry.status === "read" || entry.status === "partial" || entry.status === "failed";
 }
 
+function denseEvery(array: unknown[], predicate: (item: unknown) => boolean): boolean {
+  for (let i = 0; i < array.length; i++) {
+    if (!Object.hasOwn(array, i) || !predicate(array[i])) return false;
+  }
+  return true;
+}
+
 /** Only the documented shape is treated as structured; other text is left untouched. */
 export function isStructuredReport(value: unknown): value is StructuredReport {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
@@ -42,10 +51,10 @@ export function isStructuredReport(value: unknown): value is StructuredReport {
   if (typeof obj.summary !== "string" || !obj.summary.trim()) return false;
   return (
     ["files", "tests", "blockers"].every(
-      (key) => obj[key] === undefined || (Array.isArray(obj[key]) && obj[key].every((item: unknown) => typeof item === "string")),
+      (key) => obj[key] === undefined || (Array.isArray(obj[key]) && denseEvery(obj[key], (item) => typeof item === "string")),
     ) &&
     (["evidence", "coverage"] as const).every(
-      (key) => obj[key] === undefined || (Array.isArray(obj[key]) && obj[key].every((entry: unknown) => validEntry(entry, key))),
+      (key) => obj[key] === undefined || (Array.isArray(obj[key]) && denseEvery(obj[key], (entry) => validEntry(entry, key))),
     )
   );
 }
@@ -55,7 +64,24 @@ export function encodeReport(report: string | undefined, structured: unknown, re
   if (structured !== undefined) {
     if (!isStructuredReport(structured))
       throw new Error("Invalid structured report: expected summary and valid optional files, tests, blockers, evidence and coverage.");
-    return JSON.stringify(structured);
+    // Snapshot the validated fields before invoking any user-provided toJSON methods.
+    const expected: StructuredReport = { summary: structured.summary };
+    for (const key of ["files", "tests", "blockers"] as const) {
+      if (structured[key] !== undefined) expected[key] = [...structured[key]];
+    }
+    if (structured.evidence !== undefined)
+      expected.evidence = structured.evidence.map(({ source, start, end, claim }) => ({ source, start, end, claim }));
+    if (structured.coverage !== undefined)
+      expected.coverage = structured.coverage.map(({ source, start, end, status }) => ({ source, start, end, status }));
+    let encoded: string | undefined;
+    try {
+      encoded = JSON.stringify(structured);
+      if (encoded === undefined || !isStructuredReport(expected) || !isDeepStrictEqual(JSON.parse(encoded), expected))
+        throw new Error("representation changed");
+    } catch {
+      throw new Error("Invalid structured report: JSON representation changed or could not be serialized.");
+    }
+    return encoded;
   }
   if (required && report === undefined) throw new Error("Provide report or structured.");
   return report;

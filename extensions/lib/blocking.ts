@@ -134,7 +134,7 @@ export function classifyBash(command: string, sleepLimitSec: number): BashVerdic
     if (/^while\s+(true|:|\[\s*1\s*\])/.test(text) || /^until\s+false\b/.test(text)) {
       return { blocked: true, what: "an endless loop", advice: "Start it with bg_run (with timeout_seconds) instead of holding the turn." };
     }
-    if (/^docker(\s+|-)compose\s+up\b/.test(text) && !/(\s-d\b|--detach)/.test(text)) {
+    if (/^docker(\s+|-)compose\s+up\b/.test(text) && !/(?:^|\s)(?:-d|--detach)(?:=true)?(?=\s|$)/.test(text)) {
       return { blocked: true, what: "docker compose up in the foreground", advice: "Use bg_run, or add -d." };
     }
     for (const [re, label] of DEV_SERVERS) {

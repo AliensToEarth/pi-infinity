@@ -16,7 +16,7 @@ export function jobTools(rt: () => Runtime): ToolDef[] {
     description:
       "Run a shell command in the background and return at once. Output goes to a log file. When the process ends you receive one [infinity event] message with the exit code and the last lines. " +
       "Use it for builds, tests, servers, installs and anything that may take more than a few seconds. After starting it, end your turn or do independent work. Never poll, wait or tail it. " +
-      "Optional watch: regex sources; matching lines are batched into events (rate limited) so you can react to a ready line. Jobs end when the session ends.",
+      "Optional watch: regex sources; matching lines are batched into events (rate limited) so you can react to a ready line. Running shells are cancelled when the session ends; descendants of an already-exited shell may survive.",
     promptSnippet: "Run a command in the background, results arrive later as [infinity event] messages.",
     promptGuidelines: [
       "Never wait on slow work. Start it with bg_run, then end your turn or do independent work; the result arrives as an [infinity event] message.",

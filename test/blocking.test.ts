@@ -36,10 +36,21 @@ test("R-B2 dev servers and watchers", () => {
     "watch ls",
     "docker compose up",
     "docker-compose up web",
+    "docker compose up --detach=false",
+    "docker compose up --detached",
   ]) {
     assert.equal(blocked(c), true, c);
   }
-  for (const c of ["npm run build", "npm test", "vite build", "next build", "docker compose up -d", "docker compose ps", "git status"])
+  for (const c of [
+    "npm run build",
+    "npm test",
+    "vite build",
+    "next build",
+    "docker compose up -d",
+    "docker compose up --detach=true",
+    "docker compose ps",
+    "git status",
+  ])
     assert.equal(blocked(c), false, c);
 });
 

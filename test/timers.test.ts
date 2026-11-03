@@ -46,6 +46,8 @@ interface HarnessOpts {
   max?: number;
   start?: number;
   fireError?: string;
+  newId?: () => string;
+  persist?: (entry: TimerEntry) => void;
 }
 
 interface Harness {
@@ -69,16 +71,19 @@ function makeStore(opts: HarnessOpts = {}): Harness {
     setTimeout: (fn, ms) => timeouts.setTimeout(fn, ms),
     clearTimeout: (handle) => timeouts.clearTimeout(handle),
     persist: (entry) => {
+      opts.persist?.(entry);
       entries.push(entry);
     },
     fire: (timer, lateMs) => {
       if (opts.fireError !== undefined) throw new Error(opts.fireError);
       fired.push({ timer, lateMs });
     },
-    newId: () => {
-      idSeq += 1;
-      return `t${idSeq}`;
-    },
+    newId:
+      opts.newId ??
+      (() => {
+        idSeq += 1;
+        return `t${idSeq}`;
+      }),
     max: opts.max ?? 8,
     logger,
   });
@@ -157,6 +162,72 @@ test("R-T7 schedule throws a clear error at the pending timer limit", () => {
   h.store.cancel("t1");
   const timer = h.store.schedule(3000);
   assert.equal(timer.dueAt, 3000);
+});
+
+test("R-T7 IDs skip pending, restored and completed timers and fail boundedly", () => {
+  const ids = ["pending", "pending", "restored", "finished", "fresh"];
+  const h = makeStore({ newId: () => ids.shift() ?? "fresh" });
+  h.store.schedule(100);
+  h.store.restore([
+    { op: "set", timer: { id: "restored", kind: "sleep", setAt: 0, dueAt: 100 } },
+    { op: "cancelled", id: "finished", at: 0 },
+  ]);
+  assert.equal(h.store.schedule(100).id, "fresh");
+  assert.throws(() => h.store.schedule(100), /unique timer id/);
+  assert.equal(h.store.list().length, 3);
+});
+
+test("R-T7 failed fired writes retain the timer and retry without throwing", () => {
+  let failures = 2;
+  const h = makeStore({
+    persist: (entry) => {
+      if (entry.op === "fired" && failures-- > 0) throw new Error("disk failure");
+    },
+  });
+  const timer = h.store.schedule(10);
+  h.clock.advance(10);
+  assert.doesNotThrow(() => h.timeouts.timers[0].fn());
+  assert.deepEqual(h.store.list(), [timer]);
+  assert.equal(h.fired.length, 0);
+  assert.ok(h.timeouts.requested[1] > 0 && h.timeouts.requested[1] <= MAX_TIMEOUT_MS);
+  h.clock.advance(h.timeouts.requested[1]);
+  h.timeouts.timers[1].fn();
+  h.clock.advance(h.timeouts.requested[2]);
+  h.timeouts.timers[2].fn();
+  assert.equal(h.fired.length, 1);
+  assert.deepEqual(h.store.list(), []);
+});
+
+test("R-T7 overdue restore retries persistence and dispose clears the retry", () => {
+  const h = makeStore({
+    start: 100,
+    persist: (entry) => {
+      if (entry.op === "fired") throw new Error("disk failure");
+    },
+  });
+  const timer: TimerRecord = { id: "old", kind: "sleep", setAt: 0, dueAt: 10 };
+  h.store.restore([{ op: "set", timer }]);
+  assert.deepEqual(h.store.list(), [timer]);
+  assert.equal(h.fired.length, 0);
+  h.store.dispose();
+  assert.equal(h.timeouts.timers[0].cleared, true);
+  h.timeouts.timers[0].fn();
+  assert.equal(h.timeouts.timers.length, 1);
+});
+
+test("R-T7 failed cancellation preserves the pending timer and native handle", () => {
+  const h = makeStore({
+    persist: (entry) => {
+      if (entry.op === "cancelled") throw new Error("disk failure");
+    },
+  });
+  const timer = h.store.schedule(10);
+  assert.throws(() => h.store.cancel(timer.id), /disk failure/);
+  assert.deepEqual(h.store.list(), [timer]);
+  assert.equal(h.timeouts.timers[0].cleared, false);
+  h.clock.advance(10);
+  h.timeouts.timers[0].fn();
+  assert.equal(h.fired.length, 1);
 });
 
 test("schedule and scheduleAt reject invalid inputs", () => {

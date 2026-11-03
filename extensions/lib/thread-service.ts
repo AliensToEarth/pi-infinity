@@ -75,6 +75,8 @@ interface Child {
   abort?: () => void;
   closing?: boolean;
   outcome?: "ok" | "error";
+  launchPending?: boolean;
+  exitPending?: boolean;
 }
 
 export class ThreadService {
@@ -157,7 +159,7 @@ export class ThreadService {
     } catch (err) {
       if (!launched) this.launchReservations--;
       if (this.launches === 0 && this.launchReservations === 0) this.launchWindowStart = undefined;
-      if (acquired) this.concurrency.complete("error");
+      if (acquired && !launched) this.concurrency.complete("error");
       throw err;
     }
   }
@@ -213,6 +215,7 @@ export class ThreadService {
       ...(transport === "subagents" ? { transport } : {}),
     };
     let detached: DetachedLaunch | undefined;
+    const child: Child = { record, callId: io.callId, backend, launchPending: true };
     let launched = false;
     const markLaunched = () => {
       launched = true;
@@ -233,13 +236,25 @@ export class ThreadService {
         markLaunched();
       } else {
         this.d.files.write(record);
-        const launched = await io.launch({ agent: fresh ? AGENT_FRESH : AGENT_FORK, task, name: id, cwd: sandbox?.path, model: p.model });
+        this.children.set(id, child);
+        const result = await io.launch({ agent: fresh ? AGENT_FRESH : AGENT_FORK, task, name: id, cwd: sandbox?.path, model: p.model });
         markLaunched();
-        if (launched.sessionFile) record.sessionFile = launched.sessionFile;
-        if (!this.disposed) this.d.files.write(record);
+        if (result.sessionFile) record.sessionFile = result.sessionFile;
+        if (!this.disposed) {
+          try {
+            this.d.files.write(record);
+          } catch (err) {
+            this.d.logger.error("threads.spawn", err);
+          }
+        }
       }
     } catch (err) {
-      this.d.files.remove(id);
+      this.children.delete(id);
+      try {
+        this.d.files.remove(id);
+      } catch (removeErr) {
+        this.d.logger.error("threads.spawn", removeErr);
+      }
       if (!launched && sandbox && backend) await this.cleanupSandbox(backend, sandbox);
       throw err;
     }
@@ -251,11 +266,12 @@ export class ThreadService {
         void detached.done.catch((err: unknown) => this.d.logger.error("threads.shutdown", err));
         detached.abort();
       }
+      this.children.delete(id);
       this.d.files.remove(id);
       throw new Error("Cannot spawn a thread after the session has ended.");
     }
 
-    const child: Child = { record, callId: io.callId, backend, abort: detached?.abort };
+    child.abort = detached?.abort;
     this.children.set(id, child);
     if (detached) {
       void detached.done.then(
@@ -270,24 +286,32 @@ export class ThreadService {
           this.onClosed(child, { type: "closed", seq: 0, text: String(err), at: this.now() }, this.sourceOf(child), "error"),
       );
     } else if (record.sessionFile) {
-      child.watcher = new InboxWatcher({
-        file: inboxPath(record.sessionFile),
-        logger: this.d.logger,
-        pollMs: this.d.pollMs,
-        onLine: (line) => this.onInbox(child, line),
-      });
-      child.watcher.start();
+      try {
+        child.watcher = new InboxWatcher({
+          file: inboxPath(record.sessionFile),
+          logger: this.d.logger,
+          pollMs: this.d.pollMs,
+          onLine: (line) => this.onInbox(child, line),
+        });
+        child.watcher.start();
+      } catch (err) {
+        this.d.logger.error("threads.spawn", err);
+      }
     } else {
       this.d.logger.error("threads.spawn", new Error(`no session file returned for ${id}, reports from it cannot be received`));
     }
+    child.launchPending = false;
+    if (child.exitPending) await this.childExited(id);
     const where = sandbox ? ` Its working directory is the sandbox branch ${sandbox.branch}.` : "";
     const arrives =
       transport === "subagents"
         ? "Its final report arrives as one [infinity event] message"
         : "Its reports and its close arrive as [infinity event] messages";
     const text =
-      `Child thread ${id} (${fresh ? "fresh context" : "inherited context"}) is running.${where} ` +
-      `${arrives}. Do not poll. End your turn or work on something independent.`;
+      child.closing || record.status === "closed"
+        ? `Child thread ${id} (${fresh ? "fresh context" : "inherited context"}) has finished.${where} Its close arrives as an [infinity event] message.`
+        : `Child thread ${id} (${fresh ? "fresh context" : "inherited context"}) is running.${where} ` +
+          `${arrives}. Do not poll. End your turn or work on something independent.`;
     return { id, text };
   }
 
@@ -331,6 +355,10 @@ export class ThreadService {
   async childExited(threadId: string): Promise<void> {
     const child = this.children.get(threadId);
     if (!child || child.record.status === "closed") return;
+    if (child.launchPending) {
+      child.exitPending = true;
+      return;
+    }
     child.watcher?.drain();
     if (this.hasClosed(threadId)) return;
     await this.onClosed(
@@ -452,7 +480,9 @@ export class ThreadService {
     });
     if (!result.ok) {
       const why = result.conflicts.length > 0 ? `conflicts in: ${result.conflicts.join(", ")}` : (result.error ?? "unknown error");
-      throw new Error(`Squash of ${threadId} failed (${why}). The sandbox branch ${sb.branch} is intact and the target is unchanged.`);
+      throw new Error(
+        `Squash of ${threadId} failed (${why}). The sandbox branch ${sb.branch} is intact; inspect the target before retrying.`,
+      );
     }
     await backend.remove(sb, { keepBranch: true });
     const rootHow =
@@ -486,10 +516,11 @@ export class ThreadService {
     if (merged.length === 0) return "nothing to prune";
     const ok = await io.confirm(
       "Prune sandboxes",
-      `Delete ${merged.length} merged sandbox branch(es)?\n${merged.map((m) => m.branch).join("\n")}`,
+      `Prune eligible branches among ${merged.length} merged sandbox branch(es)? Some may be retained if their work cannot be verified.\n${merged.map((m) => m.branch).join("\n")}`,
     );
     if (!ok) return "cancelled";
     const deleted = await picked.backend.pruneMerged(picked.repoRoot);
+    if (deleted.length === 0) return "no eligible sandbox branches to prune";
     return `deleted ${deleted.length} sandbox branch(es): ${deleted.join(", ")}`;
   }
 

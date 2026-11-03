@@ -75,6 +75,7 @@ interface Internal {
   firstMatch?: string;
   lastMatch?: string;
   cancelRequested: boolean;
+  killRequested: boolean;
   timedOut: boolean;
   killTimer?: ReturnType<typeof setTimeout>;
   timeoutTimer?: ReturnType<typeof setTimeout>;
@@ -178,6 +179,7 @@ export class JobManager {
       matchSeq: 0,
       emitTimes: [],
       cancelRequested: false,
+      killRequested: false,
       timedOut: false,
       finalized: false,
       logTruncated: false,
@@ -310,14 +312,13 @@ export class JobManager {
 
   private requestKill(st: Internal): void {
     const pid = st.job.pid;
-    if (pid === undefined || st.job.status !== "running") return;
+    if (pid === undefined || st.job.status !== "running" || st.exitSeen || st.killRequested) return;
+    st.killRequested = true;
     this.signal(pid, "SIGTERM");
-    if (!st.killTimer) {
-      st.killTimer = setTimeout(() => {
-        // The shell may have exited while descendants in its group ignored SIGTERM.
-        this.signal(pid, "SIGKILL");
-      }, this.deps.killGraceMs ?? 3000);
-    }
+    st.killTimer = setTimeout(() => {
+      // The shell may have exited while descendants in its group ignored SIGTERM.
+      this.signal(pid, "SIGKILL");
+    }, this.deps.killGraceMs ?? 3000);
   }
 
   private signal(pid: number, signal: NodeJS.Signals): void {
@@ -404,7 +405,11 @@ export class JobManager {
     st.job.exitCode = code;
     st.job.signal = signal;
     // Grandchildren may keep stdio open. Do not wait for them forever.
-    st.closeTimer = setTimeout(() => this.finalize(st), this.deps.closeGraceMs ?? 1000);
+    st.closeTimer = setTimeout(() => {
+      this.finalize(st);
+      st.child?.stdout?.destroy();
+      st.child?.stderr?.destroy();
+    }, this.deps.closeGraceMs ?? 1000);
   }
 
   private fail(st: Internal, err: unknown): void {

@@ -95,11 +95,12 @@ not claim complete coverage just because a child closed. Inspect metadata and se
 splitting; use scripts for exact aggregation and only delegate unresolved work.
 R-RLM2. Structured thread reports accept optional `evidence` entries with a source, inclusive
 line range, and claim, plus `coverage` entries with a source, inclusive line range, and status
-(`read`, `partial`, or `failed`). Validate and render these on both transports without changing
-legacy reports. These are untrusted claims, not verified citations or proof of coverage.
+(`read`, `partial`, or `failed`). Reject malformed programmatic inputs, including sparse arrays
+and values whose JSON representation changes the validated shape. Validate and render these on
+both transports without changing legacy reports. These are untrusted claims, not verified citations or proof of coverage.
 R-RLM3. A deterministic `assess_coverage` tool compares caller-supplied assigned ranges with
 reported read ranges and returns missing ranges, failures and evidence in input order. Invalid
-ranges are rejected. It does not read the source or verify reports, and coverage says nothing
+ranges and sparse arrays are rejected. It does not read the source or verify reports, and coverage says nothing
 about correctness. Duplicate and overlapping read ranges must not hide gaps.
 R-RLM4. Optional session-local direct-child launch limits cap the total launches and admission
 window, in addition to existing concurrency and depth limits. Limits are enforced before launch,
@@ -253,7 +254,8 @@ R-E1. `eventId` is `<source id>:<kind>:<seq>`. The emitter keeps a bounded seen-
       (`events.seenCap`) and drops a second emit with the same id. This makes delivery
       idempotent like Infinity's processed-id set.
 R-E2. Bodies longer than `events.maxChars` are written to `spill/<hash>.txt` and
-      replaced by head, tail and the file path, even if they contain the spill marker.
+      replaced by head, tail and the file path, even if they contain the spill marker. A zero
+      tail length produces no tail, never the full original body.
 R-E3. Delivery is always `steer` with `triggerTurn: true`, which is the same path
       pi-interactive-subagents uses for results. If a user message is pending the event
       queues behind it (interruptible by construction).
@@ -273,6 +275,13 @@ R-E6. Before sending, persist the event input as an `infinity-event-pending` ent
       outbox entries do not suppress reconstruction of fired timer events.
 R-E7. Job event source ids include a fresh runtime nonce so a restarted session can reuse
       a tool-facing job id without colliding with earlier durable event ids.
+R-T7. Timer ids must not collide with pending or previously restored, fired, or cancelled ids.
+      Persistence failure must not lose a pending timer or make a failed cancellation appear
+      successful. A failed fired-entry write is logged and retried without throwing from a native
+      timer callback; retries stop when the store is disposed.
+R-H12. An interactive child that starts remains tracked even if later bookkeeping fails.
+      An exit arriving while launch is still in progress must be reconciled after registration,
+      including when the child never sends a report.
 
 ## 5. Modules
 
@@ -300,7 +309,9 @@ R-J3. All output (stdout and stderr merged in arrival order) goes to the job log
 R-J4. Exit always emits one `job_exit` event with status (`exited`, `signaled`, `cancelled`,
       `timeout`, `error`), exit code, duration, the last `jobs.tailLines` lines, line count,
       and the log path. Tail is subject to R-E2. The job timeout stops when the shell exits,
-      even if inherited output pipes remain open while the manager waits to finalize.
+      even if inherited output pipes remain open while the manager waits to finalize. Once the
+      close grace expires, the manager closes its pipe handles so descendants cannot keep the
+      pi process alive.
 R-J5. `watch` patterns are compiled at start. An invalid pattern or one longer than 200
       characters fails the call with a clear error and starts nothing. To bound memory,
       watch patterns inspect at most the first 65536 UTF-16 code units of each line;
@@ -316,10 +327,12 @@ R-J7. Delivery mode. By default (threaded in Infinity terms) matches are rate li
 R-J8. `bg_cancel` sends SIGTERM to the group, waits 3 s, then sends SIGKILL to the group,
       even if its shell has already exited, to stop descendants that ignored SIGTERM. It
       returns without waiting for the exit. A second cancel on the same job is a no-op that
-      reports the current state. Cancelling an unknown id is an error result, not a throw.
+      reports the current state and sends no additional signal. Cancelling an unknown id is an error result, not a throw.
 R-J9. On `session_shutdown` every running job is cancelled with the same procedure, without
       waiting. Disposing the runtime must not cancel the pending SIGKILL escalation for a
-      process that ignored SIGTERM. Jobs do not survive a restart. This is stated in the tool description.
+      process that ignored SIGTERM. Jobs whose shell is still running do not survive a restart.
+      Descendants that outlive an already-exited shell are not tracked and may survive; signalling
+      an old process-group id later could kill an unrelated reused group.
 R-J10. At most `jobs.max` jobs run at once. Further `bg_run` calls fail with a message that
        lists running jobs.
 R-J11. A user interrupt (escape) does not cancel jobs. Background work is the point.
@@ -345,7 +358,8 @@ R-B1. `tool_call` handler for `bash`. If `bash.guard` is `block` and the command
 R-B2. Classifier flags: `sleep N` with N at or above `sleepLimitSec` (also `sleep Nm`, `Nh`),
       `tail -f`, `tail -F`, `tail --follow`, `watch <cmd>`, `while true`, `while :`, known
       dev servers (`npm|pnpm|yarn|bun run dev|start|serve`, `vite`, `next dev`,
-      `python -m http.server`, `php -S`, `rails s`), `docker compose up` without `-d`.
+      `python -m http.server`, `php -S`, `rails s`), `docker compose up` without a true
+      detached flag. `--detach=false` and similarly prefixed flags do not count.
 R-B3. A command that ends with a lone `&`, or starts with `nohup`, `setsid` or `timeout`, is
       not flagged. Quoted text is not scanned (the classifier tokenizes first).
 R-B4. If the call has no `timeout` argument, set it to `bash.defaultTimeoutSec`.
@@ -494,17 +508,24 @@ R-S5. `squash_sandbox` rejects running children and children still finalizing th
       uncommitted, and the user must confirm first (`ctx.ui.confirm`). Without UI the call
       refuses. Both backends refuse a target with uncommitted file changes, rather than
       mixing unrelated work into the squash or its commit. Git squash refuses to overwrite
-      ignored files in the target.
-R-S6. Conflicts abort the squash (`git merge --abort` or reset), leave the child branch
-      intact, and return the conflicting paths as an error result.
+      ignored files in the target. With auto-commit disabled, git refuses to squash a dirty
+      sandbox instead of deleting its uncommitted changes. Git worktree removal refuses to
+      discard ignored files; they require explicit manual cleanup.
+R-S6. A failed squash preserves the child branch and must not reset unrelated work created
+      concurrently. If safe automatic rollback is not possible, leave the target state intact
+      and report that manual recovery may be required, together with conflicting paths.
 R-S7. After a successful squash the worktree is removed and the branch is kept. `/infinity
       sandboxes` lists branches, `/infinity prune` deletes merged ones after confirmation and
-      refuses while the working tree holds applied sandbox work that is not committed. A
-      git branch counts as merged when its current tip was squashed, or when it moved past
-      its recorded base and is an ancestor of HEAD. Moving a branch after a squash invalidates
+      refuses while any git worktree holds uncommitted changes and must not delete a branch
+      that moved after it was inspected. Git pruning requires the current tip to be an ancestor
+      of HEAD, beyond its recorded base; a squash marker alone is not proof that applied work
+      still exists. A git branch is displayed as merged when its current tip was squashed, or
+      when it moved past its recorded base and is an ancestor of HEAD. Moving a branch after a squash invalidates
       its squash marker; legacy markers without a recorded tip do not prove it merged. A fresh
       branch is never merged. A jj bookmark counts as merged only when its current commit
-      matches the recorded post-squash commit; old path-only markers are not proof of a merge.
+      matches the source commit actually squashed; old path-only markers are not proof of a merge.
+      Automatic jj bookmark pruning is disabled: jj has no conditional delete and a bookmark
+      may move between inspection and deletion. Users may delete bookmarks manually.
       Before recursively deleting a jj workspace directory, including one under an absolute
       sandbox root outside the repository, removal verifies its registered name and path and
       its repository pointer; if verification fails, it leaves both the directory and the

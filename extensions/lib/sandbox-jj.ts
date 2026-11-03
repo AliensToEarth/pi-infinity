@@ -230,30 +230,34 @@ export class JjSandbox implements SandboxBackend {
     // diff would read zero afterwards.
     const summary = await this.jjWsR(sb.path, targetPath, ["diff", "-r", sb.branch, "--summary"]);
     const filesChanged = lines(summary).length;
-    // The op id is the rollback point; every jj command records one.
-    const opId = (await jj(targetPath, ["op", "log", "-n", "1", "--no-graph", "-T", "id"], this.env)).trim();
-    // --use-destination-message keeps the editor closed and preserves the
-    // target's own description; commit mode describes afterwards. Squashing
-    // without --keep-emptied would abandon the source and drag the bookmark
-    // onto the source's parent.
-    const squash = await jjRun(
-      targetPath,
-      ["squash", "--from", sb.branch, "--into", "@", "--use-destination-message", "--keep-emptied"],
-      this.env,
-    );
+    // Squash a duplicate: rewriting the source would move its bookmark even
+    // on conflict. Never restore an operation, which can erase concurrent work.
+    const source = (await jj(targetPath, ["log", "-r", sb.branch, "--no-graph", "-T", "commit_id"], this.env)).trim();
+    const marker = readMarker(join(sb.repoRoot, ".jj", MARKER_NAME), this.logger);
+    if (marker[sb.branch] === source) return { ok: true, filesChanged: 0 };
+    const duplicate = await jjRun(targetPath, ["--config", 'templates.commit_summary="commit_id"', "duplicate", source], this.env);
+    const duplicateId = /\bas ([0-9a-f]{40,64})\s*$/.exec(duplicate.stderr)?.[1];
+    if (duplicate.code !== 0 || duplicateId === undefined) {
+      return { ok: false, conflicts: [], error: `cannot duplicate sandbox change: ${duplicate.stderr.trim()}` };
+    }
+    const squash = await jjRun(targetPath, ["squash", "--from", duplicateId, "--into", "@", "--use-destination-message"], this.env);
     if (squash.code !== 0) {
       const hint = squash.stderr.trim() !== "" ? squash.stderr.trim() : squash.stdout.trim();
       return { ok: false, conflicts: [], error: `squash failed with exit code ${squash.code}: ${hint}` };
     }
     const conflicts = await jjRun(targetPath, ["resolve", "--list"], this.env);
-    // jj happily commits conflicts, so a conflicted squash "succeeds"; undo it
-    // and report the paths. Exit code 2 means no conflicts.
+    // A conflicted target is left for manual recovery rather than restoring
+    // repository-wide state and discarding unrelated concurrent operations.
     if (conflicts.code === 0 && conflicts.stdout.trim() !== "") {
-      // Restoring the recorded op undoes the squash, the bookmark move and the
-      // working-copy rewrite in one step.
-      await jj(targetPath, ["op", "restore", opId], this.env);
       const paths = lines(conflicts.stdout).map((l) => l.split(/\s+/)[0]);
-      return { ok: false, conflicts: paths };
+      return { ok: false, conflicts: paths, error: "squash left conflicts in the target; manual recovery may be required" };
+    }
+    if (conflicts.code !== 0 && conflicts.code !== 2) {
+      return {
+        ok: false,
+        conflicts: [],
+        error: `cannot check squash conflicts; manual recovery may be required: ${conflicts.stderr.trim()}`,
+      };
     }
     let commitSha: string | undefined;
     if (opts.commit) {
@@ -262,8 +266,9 @@ export class JjSandbox implements SandboxBackend {
       // Empty the target's working-copy change so the next squash starts clean.
       await jj(targetPath, ["new"], this.env);
     }
-    const tip = (await jj(targetPath, ["log", "-r", sb.branch, "--no-graph", "-T", 'commit_id ++ "\\n"'], this.env)).trim();
-    this.recordSquashed(sb, tip);
+    // An uncommitted root squash can be abandoned, so its source is still
+    // the only durable backup and must not become eligible for pruning.
+    if (opts.commit) this.recordSquashed(sb, source);
     return { ok: true, commitSha, filesChanged };
   }
 
@@ -338,14 +343,10 @@ export class JjSandbox implements SandboxBackend {
   }
 
   async pruneMerged(repoRoot: string): Promise<string[]> {
-    const infos = await this.list(repoRoot);
-    const deleted: string[] = [];
-    for (const info of infos) {
-      if (!info.merged || info.hasWorktree) continue;
-      await jj(repoRoot, ["bookmark", "delete", info.branch], this.env);
-      deleted.push(info.branch);
+    if ((await this.list(repoRoot)).some((info) => info.merged && !info.hasWorktree)) {
+      throw new Error("automatic jj bookmark pruning is disabled; inspect and delete bookmarks manually");
     }
-    return deleted.sort();
+    return [];
   }
 
   // Runs jj in a sandbox workspace. A squash rewrites the sandbox's

@@ -60,6 +60,13 @@ test("R-RLM3 validates untrusted inputs and bounds resource use", () => {
   );
 });
 
+test("R-RLM3 rejects sparse assigned, coverage and evidence arrays", () => {
+  for (const key of ["assigned", "coverage", "evidence"] as const) {
+    const input = { assigned: [], coverage: [], evidence: [], [key]: new Array(1) };
+    assert.throws(() => assessCoverage(input), /Sparse/);
+  }
+});
+
 test("R-RLM3 tool returns unverified assessment and validates at execution boundary", async () => {
   const tool = coverageTools()[0];
   const result = await tool.execute("id", { assigned: [range(1, 2)], coverage: [] }, undefined, () => {}, {} as never);

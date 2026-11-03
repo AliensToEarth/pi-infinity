@@ -292,12 +292,52 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
     } else {
       assert.deepEqual(res.conflicts, ["file.txt"]);
     }
-    // The target is rolled back: clean working copy at the first child's version.
-    assert.equal(await summary(repo, env), "");
-    assert.equal(readFileSync(join(repo, "file.txt"), "utf8"), "one\n");
+    // Conflict recovery is manual; the source remains available as a backup.
+    assert.match(res.error ?? "", /manual recovery/);
+    assert.match(await xjj(repo, env, ["resolve", "--list"]), /file\.txt/);
     // The second sandbox and its bookmark are untouched.
     assert.equal(readFileSync(join(c2.path, "file.txt"), "utf8"), "two\n");
     assert.equal(await commitId(repo, env, "sandbox-second"), secondAt);
+  });
+
+  t.test("R-S6 conflicting squash does not restore over concurrent operations", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const b = backend(env);
+    const first = await b.create({ cwd: repo, id: "first" });
+    const second = await b.create({ cwd: repo, id: "second" });
+    writeFileSync(join(first.path, "file.txt"), "one\n");
+    writeFileSync(join(second.path, "file.txt"), "two\n");
+    await b.commitAll(first, "first");
+    await b.commitAll(second, "second");
+    assert.equal((await b.squashInto(repo, first, { commit: true })).ok, true);
+    const source = await commitId(repo, env, second.branch);
+    const bin = tempDir(t);
+    const realJj = (await exec("which", ["jj"], { env, encoding: "utf8" })).stdout.trim();
+    const wrapper = join(bin, "jj");
+    writeFileSync(
+      wrapper,
+      `#!/bin/sh\ncase "$*" in\n  *"resolve --list"*) "${realJj}" --ignore-working-copy bookmark create unrelated -r @- || exit $?;;\nesac\nexec "${realJj}" "$@"\n`,
+    );
+    chmodSync(wrapper, 0o755);
+    const result = await backend({ ...env, PATH: `${bin}:${env.PATH}` }).squashInto(repo, second, { commit: true });
+    assert.equal(result.ok, false);
+    assert.equal(await commitId(repo, env, second.branch), source);
+    assert.match(await commitId(repo, env, "unrelated"), /^[0-9a-f]{40}$/);
+  });
+
+  t.test("R-S7 uncommitted root squash keeps its source bookmark through prune", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const b = backend(env);
+    const sb = await b.create({ cwd: repo, id: "backup" });
+    writeFileSync(join(sb.path, "work.txt"), "valuable\n");
+    await b.commitAll(sb, "work");
+    const source = await commitId(repo, env, sb.branch);
+    assert.equal((await b.squashInto(repo, sb, { commit: false })).ok, true);
+    await b.remove(sb, { keepBranch: true });
+    assert.deepEqual(await b.pruneMerged(repo), []);
+    await xjj(repo, env, ["abandon", "@"]);
+    assert.equal(await commitId(repo, env, sb.branch), source);
+    assert.equal((await xjj(repo, env, ["file", "show", "-r", sb.branch, "work.txt"])).trim(), "valuable");
   });
 
   t.test("R-S7 remove deletes the workspace and optionally the bookmark", async (t) => {
@@ -436,7 +476,7 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
     assert.deepEqual(await b.pruneMerged(repo), []);
   });
 
-  t.test("R-S7 pruneMerged deletes merged bookmarks without a workspace", async (t) => {
+  t.test("R-S7 pruneMerged refuses to delete jj bookmarks", async (t) => {
     const { repo, env } = await initRepo(t, { colocate: false });
     const b = backend(env);
     const a = await b.create({ cwd: repo, id: "a" });
@@ -452,17 +492,12 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
       assert.equal(r.ok, true);
     }
     await b.remove(a, { keepBranch: true });
-    // c is merged but still has a workspace, b is not merged: both survive.
-    const deleted = await b.pruneMerged(repo);
-    assert.deepEqual(deleted, ["sandbox-a"]);
-    let names = (await xjj(repo, env, ["bookmark", "list", "-T", 'name ++ "\n"'])).trim();
-    assert.equal(names.includes("sandbox-a"), false);
-    assert.equal(names.includes("sandbox-c"), true);
-    assert.equal(names.includes(kept.branch), true);
+    await assert.rejects(b.pruneMerged(repo), /automatic jj bookmark pruning is disabled/);
     await b.remove(c, { keepBranch: true });
-    assert.deepEqual(await b.pruneMerged(repo), ["sandbox-c"]);
-    names = (await xjj(repo, env, ["bookmark", "list", "-T", 'name ++ "\n"'])).trim();
-    assert.equal(names.includes("sandbox-c"), false);
+    await assert.rejects(b.pruneMerged(repo), /automatic jj bookmark pruning is disabled/);
+    const names = (await xjj(repo, env, ["bookmark", "list", "-T", 'name ++ "\n"'])).trim();
+    assert.equal(names.includes("sandbox-a"), true);
+    assert.equal(names.includes("sandbox-c"), true);
     assert.equal(names.includes(kept.branch), true);
   });
 

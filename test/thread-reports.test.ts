@@ -67,6 +67,23 @@ test("R-RLM2 rejects invalid entries and preserves unrecognized reports", () => 
   }
 });
 
+test("R-RLM2 rejects sparse arrays and representation-changing serialization", () => {
+  for (const key of ["files", "tests", "blockers", "evidence", "coverage"]) {
+    assert.throws(() => encodeReport(undefined, { summary: "x", [key]: new Array(1) }, true), /Invalid structured/);
+  }
+  const entry = { source: "file", start: 1, end: 2, claim: "claim" };
+  const changedEntry = Object.defineProperty(entry, "toJSON", { value: () => ({ ...entry, claim: "changed" }) });
+  const changedReport = Object.defineProperty({ summary: "x" }, "toJSON", { value: () => ({ summary: "different" }) });
+  const changedArray = Object.defineProperty(["a"], "toJSON", { value: () => [] });
+  for (const report of [changedReport, { summary: "x", files: changedArray }, { summary: "x", evidence: [changedEntry] }]) {
+    assert.throws(() => encodeReport(undefined, report, true), /Invalid structured/);
+  }
+  assert.deepEqual(JSON.parse(encodeReport(undefined, { summary: "x", files: undefined, evidence: [] }, true)!), {
+    summary: "x",
+    evidence: [],
+  });
+});
+
 test("R-H6a structured reports preserve Unicode and escaped text; malformed or mismatched JSON stays literal", () => {
   const summary = 'Done: β, ✓, "quoted"\nnext line';
   const encoded = encodeReport(undefined, { summary, files: ["目录/a.ts", "space name.ts"], blockers: ["one, two"] }, true)!;

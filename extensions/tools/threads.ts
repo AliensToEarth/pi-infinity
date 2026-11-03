@@ -132,7 +132,7 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
     name: "squash_sandbox",
     label: "Squash sandbox",
     description:
-      "Merge a finished child's sandbox branch into your working tree with git merge --squash. If you are a sandboxed thread the result is committed. In the main session the changes are only staged, and the user must confirm first. Conflicts abort and leave both sides unchanged.",
+      "Merge a finished child's sandbox branch into your working tree. If you are a sandboxed thread the result is committed. In the main session the user must confirm first. On conflict the sandbox is preserved and the target may need manual recovery.",
     parameters: Type.Object({
       thread_id: Type.String(),
       commit: Type.Optional(Type.Boolean({ description: "Commit the result (sandboxed callers only, default true)" })),

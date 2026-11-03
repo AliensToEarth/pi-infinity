@@ -27,6 +27,19 @@ test("R-O1 large results are replaced with head, marker, tail and a saved file",
   assert.equal(readFileSync(path, "utf8"), text);
 });
 
+test("R-O1 zero tail keeps the saved output but not the full body in the preview", () => {
+  const text = "H".repeat(300) + "M".repeat(2000) + "TAIL";
+  const out = guardContent([{ type: "text", text }], mkdtempSync(join(tmpdir(), "pi-inf-ov-")), { ...limits, tailChars: 0 }, () => {});
+  assert.ok(out);
+  const preview = (out[0] as { text: string }).text;
+  const path = /saved to (\S+);/.exec(preview)?.[1];
+  assert.ok(path);
+  assert.equal(readFileSync(path, "utf8"), text);
+  assert.ok(preview.startsWith("H".repeat(300)));
+  assert.ok(!preview.includes("TAIL"));
+  assert.ok(preview.length < text.length);
+});
+
 test("R-O2 non-text parts are kept and several text parts are summed", () => {
   const img = { type: "image", data: "xx", mimeType: "image/png" };
   const out = guardContent(

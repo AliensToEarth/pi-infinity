@@ -88,6 +88,7 @@ test("R-G2 tool descriptions are short and carry the key guidance", async () => 
   const s = await started();
   for (const [name, t] of s.tools) assert.ok(t.description.length < 900, `${name} description is ${t.description.length} chars`);
   assert.match(s.tools.get("bg_run").description, /Never poll/);
+  assert.match(s.tools.get("bg_run").description, /already-exited shell may survive/);
   assert.match(s.tools.get("bg_run").description, /\[infinity event\]/);
   assert.match(s.tools.get("sleep").description, /ends your turn/);
   assert.match(s.tools.get("spawn_thread").description, /child_of/);
@@ -145,6 +146,27 @@ test("R-O1 oversized results are replaced, read is exempt", async () => {
   };
   assert.ok(res.content[0].text.length < 10000);
   assert.equal(await s.emit("tool_result", { toolName: "read", content: [big], isError: false }, s.ctx), undefined);
+});
+
+test("R-O1 oversized structured results retain structuredContent while text is guarded", async () => {
+  const s = await started();
+  const structuredContent = { items: ["original"], nested: { count: 1 } };
+  const big = { type: "text", text: "z".repeat(50000) };
+  const res = (await s.emit("tool_result", { toolName: "web_fetch", content: [big], structuredContent, isError: false }, s.ctx)) as {
+    content: Array<{ text: string }>;
+    structuredContent: unknown;
+  };
+  assert.ok(res.content[0].text.length < 10000);
+  assert.equal(res.structuredContent, structuredContent);
+  assert.equal(
+    await s.emit(
+      "tool_result",
+      { toolName: "web_fetch", content: [{ type: "text", text: "small" }], structuredContent, isError: false },
+      s.ctx,
+    ),
+    undefined,
+  );
+  assert.equal(await s.emit("tool_result", { toolName: "read", content: [big], structuredContent, isError: false }, s.ctx), undefined);
 });
 
 test("R-J1 R-J4 bg_run returns at once and the exit arrives as a steer event", async () => {

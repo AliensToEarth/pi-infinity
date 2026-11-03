@@ -26,6 +26,8 @@ export interface TimerDeps {
 
 // Native timeouts wrap at 2^31 ms, so longer waits have to be chained (R-T5).
 export const MAX_TIMEOUT_MS: number = 2 ** 31 - 1;
+const RETRY_MS = 1000;
+const ID_ATTEMPTS = 100;
 
 interface Pending {
   timer: TimerRecord;
@@ -37,6 +39,7 @@ export class TimerStore {
   private readonly pending = new Map<string, Pending>();
   // Ids this store already fired or cancelled, so a replayed entry branch never runs them twice.
   private readonly done = new Set<string>();
+  private readonly used = new Set<string>();
 
   constructor(deps: TimerDeps) {
     this.deps = deps;
@@ -63,9 +66,19 @@ export class TimerStore {
     if (this.pending.size >= this.deps.max) {
       throw new Error(`timer limit reached: at most ${this.deps.max} pending timers, cancel one first`);
     }
-    const timer: TimerRecord = { id: this.deps.newId(), kind, setAt: this.deps.now(), dueAt };
+    let id: string | undefined;
+    for (let i = 0; i < ID_ATTEMPTS; i++) {
+      const candidate = this.deps.newId();
+      if (!this.used.has(candidate)) {
+        id = candidate;
+        break;
+      }
+    }
+    if (id === undefined) throw new Error("unable to generate a unique timer id");
+    const timer: TimerRecord = { id, kind, setAt: this.deps.now(), dueAt };
     if (note !== undefined) timer.note = note;
     this.deps.persist({ op: "set", timer });
+    this.used.add(timer.id);
     this.pending.set(timer.id, { timer });
     this.arm(timer.id);
     return { ...timer };
@@ -89,26 +102,34 @@ export class TimerStore {
     this.arm(id);
   }
 
-  private fireNow(timer: TimerRecord): void {
+  private fireNow(timer: TimerRecord): boolean {
     const at = this.deps.now();
+    try {
+      this.deps.persist({ op: "fired", id: timer.id, at });
+    } catch (err) {
+      this.deps.logger.error("timers", err);
+      const p = this.pending.get(timer.id);
+      if (p !== undefined) p.handle = this.deps.setTimeout(() => this.onWake(timer.id), RETRY_MS);
+      return false;
+    }
     this.pending.delete(timer.id);
     this.done.add(timer.id);
-    this.deps.persist({ op: "fired", id: timer.id, at });
     // A throwing fire callback must not take down the store or other timers.
     try {
       this.deps.fire(timer, Math.max(0, at - timer.dueAt));
     } catch (err) {
       this.deps.logger.error("timers", err);
     }
+    return true;
   }
 
   cancel(id: string): boolean {
     const p = this.pending.get(id);
     if (p === undefined) return false;
+    this.deps.persist({ op: "cancelled", id, at: this.deps.now() });
     this.deps.clearTimeout(p.handle);
     this.pending.delete(id);
     this.done.add(id);
-    this.deps.persist({ op: "cancelled", id, at: this.deps.now() });
     return true;
   }
 
@@ -142,10 +163,12 @@ export class TimerStore {
           this.deps.logger.error("timers", new Error(`malformed timer set entry: ${JSON.stringify(entry)}`));
           continue;
         }
+        this.used.add(timer.id);
         if (this.done.has(timer.id) || this.pending.has(timer.id)) continue;
         seen.set(timer.id, timer);
       } else if (entry.op === "fired" || entry.op === "cancelled") {
         const id = entry.id;
+        this.used.add(id);
         seen.delete(id);
         const p = this.pending.get(id);
         if (p !== undefined) {
@@ -165,8 +188,8 @@ export class TimerStore {
       this.pending.set(timer.id, { timer });
       if (timer.dueAt <= this.deps.now()) {
         // Overdue: deliver the wake-up at once with the lateness in it.
-        this.fireNow(timer);
-        firedLate++;
+        if (this.fireNow(timer)) firedLate++;
+        else rearmed++;
       } else {
         this.arm(timer.id);
         rearmed++;

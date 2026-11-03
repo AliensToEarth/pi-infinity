@@ -211,26 +211,36 @@ export class GitSandbox implements SandboxBackend {
         error: `refusing to squash into ${targetPath}: it has uncommitted or staged changes, sandbox work must never be mixed with user work`,
       };
     }
+    const sourceStatus = await git(sb.path, ["status", "--porcelain"], this.env);
+    if (sourceStatus.trim() !== "") {
+      return {
+        ok: false,
+        conflicts: [],
+        error: `refusing to squash dirty sandbox ${sb.path}: commit or preserve its uncommitted changes first`,
+      };
+    }
     // Pin both the merge and its marker to the same tip, even if the branch moves
     // while the merge is running.
     const tip = (await git(targetPath, ["rev-parse", "--verify", `refs/heads/${sb.branch}^{commit}`], this.env)).trim();
     const merge = await run(targetPath, ["merge", "--squash", "--no-overwrite-ignore", tip], this.env);
     if (merge.code !== 0) {
       const conflicts = lines(await git(targetPath, ["diff", "--name-only", "--diff-filter=U"], this.env));
-      // The tree was verified clean before the merge, so a hard reset can only undo
-      // the failed merge. git merge --abort does not apply to squash merges.
-      await git(targetPath, ["reset", "--hard", "HEAD"], this.env);
+      // Concurrent edits may have appeared after the clean-tree check. Do not
+      // reset them along with the failed squash.
       const hint = merge.stderr.trim() !== "" ? merge.stderr.trim() : merge.stdout.trim();
-      return { ok: false, conflicts, error: hint };
+      return {
+        ok: false,
+        conflicts,
+        error: `${hint}\nNo automatic reset was performed; manual recovery may be required in ${targetPath}.`,
+      };
     }
     const staged = lines(await git(targetPath, ["diff", "--cached", "--name-only"], this.env));
     let commitSha: string | undefined;
     if (opts.commit) {
       commitSha = await this.commit(targetPath, opts.message ?? `squash ${sb.branch}`);
     }
-    // Marker read by list() and pruneMerged(). Without it an uncommitted squash
-    // would be indistinguishable from a branch that was never used, and a squashed
-    // branch could be pruned while its work still sits staged.
+    // The marker is informational for list(); it does not prove that the
+    // applied work survives and must not authorize pruning.
     await git(targetPath, ["config", `branch.${sb.branch}.${SQUASHED_KEY}`, tip], this.env);
     return { ok: true, commitSha, filesChanged: staged.length };
   }
@@ -239,7 +249,9 @@ export class GitSandbox implements SandboxBackend {
     // Check existence first instead of ignoring a not-found error, so real
     // failures still surface.
     if (existsSync(sb.path)) {
-      await git(sb.repoRoot, ["worktree", "remove", "--force", sb.path], this.env);
+      const ignored = await git(sb.path, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], this.env);
+      if (ignored.trim()) throw new Error(`refusing to remove sandbox ${sb.path}: it contains ignored files`);
+      await git(sb.repoRoot, ["worktree", "remove", sb.path], this.env);
     }
     try {
       await git(sb.repoRoot, ["worktree", "prune"], this.env);
@@ -270,18 +282,23 @@ export class GitSandbox implements SandboxBackend {
   }
 
   async hasPendingWork(path: string): Promise<boolean> {
-    const r = await run(path, ["diff", "--cached", "--quiet"], this.env);
-    if (r.code === 0) return false;
-    if (r.code === 1) return true;
-    throw new Error(r.stderr.trim() || `git diff --cached failed in ${path}`);
+    const status = await git(path, ["status", "--porcelain"], this.env);
+    return status.trim() !== "";
   }
 
   async pruneMerged(repoRoot: string): Promise<string[]> {
+    const paths = await this.worktreePaths(repoRoot);
+    for (const path of paths) {
+      if (await this.hasPendingWork(path)) throw new Error(`refusing to prune: worktree ${path} has uncommitted changes`);
+    }
     const infos = await this.list(repoRoot);
     const deleted: string[] = [];
     for (const info of infos) {
-      if (!info.merged || info.hasWorktree) continue;
-      await git(repoRoot, ["branch", "-D", info.branch], this.env);
+      if (info.hasWorktree) continue;
+      const ref = `refs/heads/${info.branch}`;
+      const tip = (await git(repoRoot, ["rev-parse", "--verify", `${ref}^{commit}`], this.env)).trim();
+      if (!(await this.isAncestorPastBase(repoRoot, info.branch, tip))) continue;
+      await git(repoRoot, ["update-ref", "-d", ref, tip], this.env);
       deleted.push(info.branch);
     }
     return deleted;
@@ -325,6 +342,14 @@ export class GitSandbox implements SandboxBackend {
     return name.code === 0 && name.stdout.trim() !== "" && email.code === 0 && email.stdout.trim() !== "";
   }
 
+  private async worktreePaths(repoRoot: string): Promise<string[]> {
+    const out = await git(repoRoot, ["worktree", "list", "--porcelain", "-z"], this.env);
+    return out
+      .split("\0")
+      .filter((field) => field.startsWith("worktree "))
+      .map((field) => field.slice("worktree ".length));
+  }
+
   private async worktreeBranches(repoRoot: string): Promise<Map<string, string>> {
     const out = await git(repoRoot, ["worktree", "list", "--porcelain"], this.env);
     const map = new Map<string, string>();
@@ -342,17 +367,21 @@ export class GitSandbox implements SandboxBackend {
     return map;
   }
 
-  private async isMerged(repoRoot: string, branch: string): Promise<boolean> {
+  private async isMerged(repoRoot: string, branch: string, pinnedTip?: string): Promise<boolean> {
+    const tip = pinnedTip ?? (await git(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`], this.env)).trim();
     const marker = await run(repoRoot, ["config", `branch.${branch}.${SQUASHED_KEY}`], this.env);
     if (marker.code === 0 && /^[0-9a-f]{40,64}$/.test(marker.stdout.trim())) {
-      const tip = await git(repoRoot, ["rev-parse", "--verify", `refs/heads/${branch}^{commit}`], this.env);
-      if (tip.trim() === marker.stdout.trim()) return true;
+      if (tip === marker.stdout.trim()) return true;
     }
-    const ancestor = await run(repoRoot, ["merge-base", "--is-ancestor", branch, "HEAD"], this.env);
-    if (ancestor.code !== 0) return false;
+    return this.isAncestorPastBase(repoRoot, branch, tip);
+  }
+
+  private async isAncestorPastBase(repoRoot: string, branch: string, tip: string): Promise<boolean> {
     const base = await run(repoRoot, ["config", `branch.${branch}.${BASE_KEY}`], this.env);
-    if (base.code !== 0 || base.stdout.trim() === "") return true;
-    const tip = await git(repoRoot, ["rev-parse", branch], this.env);
-    return tip.trim() !== base.stdout.trim();
+    if (base.code !== 0 || !/^[0-9a-f]{40,64}$/.test(base.stdout.trim()) || tip === base.stdout.trim()) return false;
+    const ancestor = await run(repoRoot, ["merge-base", "--is-ancestor", tip, "HEAD"], this.env);
+    if (ancestor.code === 1) return false;
+    if (ancestor.code !== 0) throw new Error(`git merge-base --is-ancestor failed: ${ancestor.stderr.trim()}`);
+    return true;
   }
 }

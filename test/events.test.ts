@@ -45,6 +45,17 @@ test("R-E2 large bodies are spilled with head, tail and path", () => {
   assert.ok(msg.content.endsWith("Z".repeat(100)));
 });
 
+test("R-E2 zero tail spills without including the full body", () => {
+  const body = "H".repeat(40) + "M".repeat(1000) + "TAIL";
+  const result = spillIfLarge(body, mkdtempSync(join(tmpdir(), "pi-inf-sp-")), { maxChars: 100, headChars: 40, tailChars: 0 }, () => {});
+  assert.ok(result.path);
+  assert.equal(readFileSync(result.path, "utf8"), body);
+  assert.ok(result.text.startsWith("H".repeat(40)));
+  assert.ok(result.text.includes(SPILL_MARKER));
+  assert.ok(!result.text.includes("TAIL"));
+  assert.ok(result.text.length < body.length);
+});
+
 test("R-E2 an embedded spill marker cannot bypass the size limit", () => {
   const body = SPILL_MARKER + "x".repeat(500);
   const result = spillIfLarge(body, mkdtempSync(join(tmpdir(), "pi-inf-sp-")), { maxChars: 100, headChars: 40, tailChars: 20 }, () => {});

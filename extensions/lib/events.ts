@@ -99,7 +99,7 @@ export function spillIfLarge(
     onError(err);
   }
   const head = text.slice(0, limits.headChars);
-  const tail = text.slice(text.length - limits.tailChars);
+  const tail = limits.tailChars > 0 ? text.slice(-limits.tailChars) : "";
   const where = saved ? `full text saved to ${path}; use read with offset and limit` : "full text could not be saved";
   const marker = `${SPILL_MARKER}: ${text.length} chars total, ${where}]`;
   return { text: `${head}\n${marker}\n${tail}`, path: saved ? path : undefined };
