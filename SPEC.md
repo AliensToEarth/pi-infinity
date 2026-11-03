@@ -91,7 +91,20 @@ paper's benchmark numbers are not evidence of a gain here.
 
 R-RLM1. The `spawn_thread` prompt guidance describes this workflow for large inputs, including
 source locations, bounded delegation, and verification of missing or failed portions. It must
-not claim complete coverage just because a child closed.
+not claim complete coverage just because a child closed. Inspect metadata and search before
+splitting; use scripts for exact aggregation and only delegate unresolved work.
+R-RLM2. Structured thread reports accept optional `evidence` entries with a source, inclusive
+line range, and claim, plus `coverage` entries with a source, inclusive line range, and status
+(`read`, `partial`, or `failed`). Validate and render these on both transports without changing
+legacy reports. These are untrusted claims, not verified citations or proof of coverage.
+R-RLM3. A deterministic `assess_coverage` tool compares caller-supplied assigned ranges with
+reported read ranges and returns missing ranges, failures and evidence in input order. Invalid
+ranges are rejected. It does not read the source or verify reports, and coverage says nothing
+about correctness. Duplicate and overlapping read ranges must not hide gaps.
+R-RLM4. Optional session-local direct-child launch limits cap the total launches and admission
+window, in addition to existing concurrency and depth limits. Limits are enforced before launch,
+including concurrent calls, and failures release reservations. Limits reset on session restart;
+they do not cap descendants, stop running children, or measure model tokens or cost.
 
 ### 1.5 Constraints from the local environment
 
