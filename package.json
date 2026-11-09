@@ -6,6 +6,12 @@
     "pi-package"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AliensToEarth/pi-infinity.git"
+  },
+  "bugs": "https://github.com/AliensToEarth/pi-infinity/issues",
+  "homepage": "https://github.com/AliensToEarth/pi-infinity#readme",
   "type": "module",
   "scripts": {
     "check": "./check.bash",

@@ -135,8 +135,15 @@ pi-interactive-subagents, and links the thread agents. It requires pi, Node 24+,
 start or reload pi inside tmux to use interactive threads. Existing packages and agent files
 are preserved, with conflicts reported. No additional setup commands are needed.
 
-Alternatively, installing `git:github.com/AliensToEarth/pi-infinity` directly with pi installs
-only this package. Install a thread transport separately; missing agents are linked on startup.
+Once published, install from npm with `pi install npm:pi-infinity`. You can also install
+`git:github.com/AliensToEarth/pi-infinity` directly. These package-manager installs include
+only pi-infinity: install a thread transport separately; missing agents are linked on startup.
+
+### Publishing
+
+Run `./check.bash` and `npm pack --dry-run` before publishing. After confirming the npm name
+and account permissions, publish the reviewed version with `npm publish --access public`.
+Publishing requires npm authentication and any required two-factor authentication or provenance.
 
 ## Tools
 
