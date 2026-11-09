@@ -179,7 +179,7 @@ extensions/
 agents/
   thread-fresh.md     subagent definition, session-mode standalone
   thread-fork.md      subagent definition, session-mode fork
-scripts/install.sh    links agents and registers the package
+scripts/install.sh    compatibility wrapper for pi install; agent links are made at startup
 check.bash            single quality gate
 ```
 
@@ -282,6 +282,17 @@ R-T7. Timer ids must not collide with pending or previously restored, fired, or 
 R-H12. An interactive child that starts remains tracked even if later bookkeeping fails.
       An exit arriving while launch is still in progress must be reconciled after registration,
       including when the child never sends a report.
+R-H13. When pi exposes a nonempty scoped model list, `spawn_thread` uses only a model in that
+      list for either transport. Explicit overrides outside that list are rejected before launch;
+      without an override use the active model if scoped, otherwise the first scoped model.
+      With no scoped models the existing model selection remains unchanged. Only exact
+      `provider/modelId` overrides or unambiguous exact model IDs are accepted under a scope.
+R-H14. When pi-interactive-subagents is active, direct `subagent` tool calls follow the same
+      scoped-model selection and validation. This is an extension-level guard, not a security
+      boundary: external processes and sessions that do not load pi-infinity are outside it.
+R-H15. On interactive transport startup, link missing bundled thread agents into the pi agent
+      directory without overwriting existing files or symlinks. Report failures and conflicts;
+      package installation must not require running an extra shell script.
 
 ## 5. Modules
 

@@ -413,6 +413,47 @@ test("R-X1 R-X2 with both subagent tools present the interactive path is used un
     await s.emit("session_shutdown", { type: "session_shutdown", reason: "quit" }, s.ctx);
   }));
 
+test("R-H13 scoped models are enforced before interactive thread launch", async () => {
+  const s = await started();
+  const calls: any[] = [];
+  const ctx = {
+    ...s.ctx,
+    model: { provider: "other", id: "outside" },
+    scopedModels: [{ model: { provider: "allowed", id: "model" } }],
+    tools: [{ name: "subagent" }, { name: "subagent_message" }],
+    executeTool: async (_name: string, args: unknown) => {
+      calls.push(args);
+      return { isError: false, result: { content: [], details: {} } };
+    },
+  };
+  await assert.rejects(
+    s.tools.get("spawn_thread").execute("x", { instructions: "x", child_of: ["root"], model: "other/outside" }, undefined, undefined, ctx),
+    /scoped model/,
+  );
+  assert.equal(calls.length, 0);
+  await s.tools.get("spawn_thread").execute("x", { instructions: "x", child_of: ["root"] }, undefined, undefined, ctx);
+  assert.equal(calls[0].model, "allowed/model");
+  await s.emit("session_shutdown", {}, ctx);
+});
+
+test("R-H14 direct interactive subagent calls obey scoped models", async () => {
+  const s = await started();
+  const global = globalThis as { __pi_interactive_subagents?: unknown };
+  const old = global.__pi_interactive_subagents;
+  global.__pi_interactive_subagents = {};
+  try {
+    const ctx = { ...s.ctx, model: { provider: "allowed", id: "model" }, scopedModels: [{ model: { provider: "allowed", id: "model" } }] };
+    const good = { toolName: "subagent", input: {} as { model?: string } };
+    assert.equal(await s.emit("tool_call", good, ctx), undefined);
+    assert.equal(good.input.model, "allowed/model");
+    const bad = await s.emit("tool_call", { toolName: "subagent", input: { model: "other/model" } }, ctx);
+    assert.match((bad as { reason: string }).reason, /scoped model/);
+  } finally {
+    global.__pi_interactive_subagents = old;
+    await s.emit("session_shutdown", {}, s.ctx);
+  }
+});
+
 test("R-H9 same-mode nested spawns use an alternate agent name", () => {
   for (const mode of ["fresh", "fork"]) {
     const base = `thread-${mode}`;

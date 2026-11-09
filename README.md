@@ -130,11 +130,10 @@ At no point did the model sit in a blocked tool call, run a polling loop, or rea
 
 ## Install
 
-```
-git clone <this repo> && cd pi-infinity
-npm install
-./scripts/install.sh     # links agents/ into ~/.pi/agent/agents and runs `pi install` on this directory
-```
+Install `git:github.com/AliensToEarth/pi-infinity` with pi's package manager. On startup,
+pi-infinity links its missing thread agent definitions automatically. Existing agent files
+and symlinks are never replaced; conflicts are reported. Install pi-interactive-subagents or
+pi-subagents separately if you want threads.
 
 ## Tools
 
@@ -208,6 +207,12 @@ and jj workspaces are separate checkout isolation, not process security boundari
 spawn_thread({ instructions: "...", child_of: ["root"], fresh_context: true, sandbox: true })
 ```
 
+* **Scoped models.** When `/scoped-models` selects models, `spawn_thread` and direct
+  pi-interactive-subagents calls use only those models. Omitted overrides use the current model
+  if it is scoped, otherwise the first scoped model. Use an exact `provider/modelId` or an
+  unambiguous model ID for an override. With no scope, existing defaults apply. This guard is
+  not a security boundary: independently launched processes and child sessions that do not load
+  pi-infinity are outside it, and a parent-only `--models` scope is not automatically inherited.
 * **Fresh or forked context.** `fresh_context: true` starts the child with an empty history
   (agent `thread-fresh`), which suits independent work and long parent conversations. The
   instructions must then be self-contained. Without it the child forks your conversation
@@ -351,8 +356,8 @@ and ignored, so check `/infinity config` to confirm the effective limits.
   pi inside tmux) or pi-subagents, then check `threads.transport`.
 * `spawn_thread` asks for `fresh_context: true`: your session runs on pi-subagents, whose
   children cannot fork the conversation.
-* A thread starts without pi-infinity tools: run `./scripts/install.sh` again, it relinks the
-  two agent definitions.
+* A thread starts without pi-infinity tools: check startup warnings for agent-file conflicts
+  or an incompatible pi-interactive-subagents installation.
 * The guard blocks something harmless: set `bash.guard` to `warn`.
 * Errors from background machinery go to `<session artifacts>/infinity/infinity.log`.
 

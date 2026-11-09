@@ -2,6 +2,7 @@ import { Type } from "typebox";
 import { fileURLToPath } from "node:url";
 import { loadBlockingPrompt, launchViaSubagents } from "../lib/subagents-launch.ts";
 import { encodeReport } from "../lib/thread-reports.ts";
+import { scopedModel } from "../lib/scoped-model.ts";
 import type { ThreadIO, ThreadService } from "../lib/thread-service.ts";
 import { pickTransport, readAgentRegistry, type TransportSetting } from "../lib/transport.ts";
 import { tool, type ToolDef } from "./types.ts";
@@ -17,7 +18,8 @@ interface ToolCtx {
   ui: { confirm(title: string, message: string): Promise<boolean> };
   executeTool: ExecuteTool;
   tools?: ReadonlyArray<{ name: string }>;
-  model?: { provider?: string; id?: string };
+  model?: { provider: string; id: string };
+  scopedModels?: ReadonlyArray<{ model: { provider: string; id: string } }>;
 }
 
 const BLOCKING_PROMPT_FILE = fileURLToPath(new URL("../../agents/blocking/thread-blocking.md", import.meta.url));
@@ -111,7 +113,12 @@ export function spawnerTools(svc: () => ThreadService): ToolDef[] {
       ),
     }),
     async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-      const out = await svc().spawn(params, ioFor(ctx as unknown as ToolCtx, svc().transportSetting, toolCallId));
+      const context = ctx as unknown as ToolCtx;
+      const model = scopedModel(params.model, context.model, context.scopedModels ?? []);
+      const out = await svc().spawn(
+        { ...params, ...(model === undefined ? {} : { model }) },
+        ioFor(context, svc().transportSetting, toolCallId),
+      );
       return { content: [{ type: "text", text: out.text }], details: { id: out.id } };
     },
   });

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Logger } from "./lib/log.ts";
@@ -10,6 +10,36 @@ interface SubagentsGlobal {
 }
 
 const REQUIRED_AGENTS = ["thread-fresh", "thread-fork", "thread-fresh-nested", "thread-fork-nested"];
+
+export function installAgents(directory: string, logger: Logger, warn: (message: string) => void): void {
+  const targetDir = join(directory, "agents");
+  try {
+    mkdirSync(targetDir, { recursive: true });
+  } catch (err) {
+    logger.error("subagents-bridge", err);
+    warn(`pi-infinity: cannot create agent directory ${targetDir}`);
+    return;
+  }
+  for (const agent of REQUIRED_AGENTS) {
+    const source = fileURLToPath(new URL(`../agents/${agent}.md`, import.meta.url));
+    const target = join(targetDir, `${agent}.md`);
+    try {
+      symlinkSync(source, target);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+        try {
+          if (realpathSync(target) === realpathSync(source)) continue;
+        } catch (checkError) {
+          logger.error("subagents-bridge", checkError);
+        }
+        warn(`pi-infinity: agent ${target} already exists and was not replaced`);
+      } else {
+        logger.error("subagents-bridge", err);
+        warn(`pi-infinity: cannot install agent ${target}`);
+      }
+    }
+  }
+}
 
 /**
  * R-H2, R-H9. Child processes start with --no-extensions and an allowlist, so every tool
@@ -47,8 +77,6 @@ export function registerWithSubagents(
       logger.error("subagents-bridge", err);
     }
   }
-  const missing = REQUIRED_AGENTS.filter((a) => !existsSync(join(agentDir(), "agents", `${a}.md`)));
-  if (missing.length > 0)
-    warn(`pi-infinity: agent definitions missing (${missing.join(", ")}). Run scripts/install.sh from the pi-infinity repo.`);
+  installAgents(agentDir(), logger, warn);
   return transport;
 }

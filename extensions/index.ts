@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { blockMessage, classifyBash } from "./lib/blocking.ts";
 import { guardContent, type Part } from "./lib/overflow.ts";
+import { scopedModel } from "./lib/scoped-model.ts";
 import { ThreadFiles, identify } from "./lib/threads.ts";
 import { registerEventRenderer } from "./render.ts";
 import { agentDir, createRuntime, type Runtime } from "./runtime.ts";
@@ -68,6 +69,18 @@ export default function piInfinity(pi: ExtensionAPI): void {
     runtime?.dispose();
     runtime = undefined;
     if (ctx.hasUI) ctx.ui.setStatus("infinity", undefined);
+  });
+
+  // R-H14. Interactive subagent profiles may otherwise select an unscoped model.
+  pi.on("tool_call", (event, ctx) => {
+    if (event.toolName !== "subagent" || !(globalThis as { __pi_interactive_subagents?: unknown }).__pi_interactive_subagents) return;
+    const input = event.input as { model?: string };
+    try {
+      const model = scopedModel(input.model, ctx.model, ctx.scopedModels ?? []);
+      if (model !== undefined) input.model = model;
+    } catch (err) {
+      return { block: true, reason: (err as Error).message };
+    }
   });
 
   // R-B1 to R-B5.
