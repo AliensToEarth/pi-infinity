@@ -141,9 +141,16 @@ only pi-infinity: install a thread transport separately; missing agents are link
 
 ### Publishing
 
-Run `./check.bash` and `npm pack --dry-run` before publishing. After confirming the npm name
-and account permissions, publish the reviewed version with `npm publish --access public`.
-Publishing requires npm authentication and any required two-factor authentication or provenance.
+After CI passes, pushes to `main` publish the version in `package.json` if it is not already
+on npm. npm versions are immutable: bump the version for each release; pushes without a version
+bump are skipped. Registry errors fail the job rather than being treated as a missing version.
+
+Configure [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for the package:
+select GitHub Actions, owner `AliensToEarth`, repository `pi-infinity`, workflow `ci.yml`, and
+environment `npm-publish`, with direct publishing allowed. Configure the matching GitHub
+environment and any desired branch or reviewer protections. No npm token is required. If npm
+requires an existing package before trusted-publisher setup, publish the first version manually
+with `npm publish --access public` after running `./check.bash` and `npm pack --dry-run`.
 
 ## Tools
 
