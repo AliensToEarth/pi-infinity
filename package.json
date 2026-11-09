@@ -1,7 +1,7 @@
 {
   "name": "pi-infinity",
   "version": "0.1.1",
-  "description": "Infinity runtime design practices for pi: non-blocking work, durable timers, threads, sandboxes",
+  "description": "Non-blocking execution, durable timers, and parallel subagents for pi.",
   "keywords": [
     "pi-package"
   ],
