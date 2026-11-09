@@ -1,17 +1,18 @@
 # pi-infinity
 
-An independent pi package inspired by design ideas from the
-[Infinity](https://github.com/hydro-project/infinity) agent runtime. pi-infinity is an original
-implementation, not Infinity itself.
+Non-blocking execution, durable timers, and parallel subagents for pi.
 
-An agent that waits is an agent that wastes time and tokens. pi-infinity lets pi dispatch slow
-work, yield, and pick the result up later. Everything that happens in the background comes
-back as one small, bounded message, and parallel edits happen in isolated checkouts instead of
-your working directory.
+pi-infinity lets pi start slow work, yield, and receive the result later. Run commands in the
+background, delegate independent work to child threads, and optionally give each child its own
+git worktree or jj workspace.
+
+This is an independent pi package inspired by the
+[Infinity](https://github.com/hydro-project/infinity) agent runtime, not Infinity itself.
 
 * [Why](#why)
 * [How it works](#how-it-works)
 * [A short walkthrough](#a-short-walkthrough)
+* [Requirements](#requirements)
 * [Install](#install)
 * [Tools](#tools)
 * [Guards](#guards)
@@ -21,23 +22,18 @@ your working directory.
 * [Limits](#limits)
 * [Troubleshooting](#troubleshooting)
 * [Development](#development)
+* [License](#license)
 
 ## Why
 
-Out of the box, a pi turn blocks while a tool runs. That produces three habits that cost time
-and context:
+A long-running tool call can leave an agent waiting, polling for progress, or filling its
+context with output. pi-infinity provides background jobs, timers, bounded event messages, and
+child threads so the agent can work on something else or yield until an event arrives.
 
-1. The model **waits** for slow commands such as builds, test suites and dev servers.
-2. The model **polls**, with `sleep` loops and `tail -f`, to find out whether something finished.
-3. The model **floods its context** with unbounded output from tools.
-
-[Infinity](https://github.com/hydro-project/infinity), a Rust agent runtime, inspired the ideas
-behind pi-infinity: dispatch slow work, yield, receive results as messages, and use child threads
-to keep the parent's context focused. pi-infinity adapts these ideas to pi in its own
-implementation. Threads run on top of one of two subagent extensions,
+Threads build on either
 [pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents) or
-[pi-subagents](https://github.com/amosblomqvist/pi-subagents), instead of replacing them. The full research and the reasoning behind
-each feature are in [`SPEC.md`](SPEC.md).
+[pi-subagents](https://github.com/amosblomqvist/pi-subagents). The design and tradeoffs are in
+[`SPEC.md`](SPEC.md).
 
 ## How it works
 
@@ -58,7 +54,7 @@ each feature are in [`SPEC.md`](SPEC.md).
    model  <----- [infinity event] job_exit | job_match | timer | child_report | child_closed
 ```
 
-### Everything is a message
+### Background events
 
 Job exits, watched output lines, timer wake-ups and child reports all arrive as the same kind
 of message, `infinity-event`, with the same shape:
@@ -76,32 +72,31 @@ The emitter handles events as follows:
 * **Recoverable delivery.** Events are recorded before sending and replayed after a restart if
   absent from the active session transcript. A persisted message acknowledges delivery to the
   transcript, not that the model processed it; a crash can still cause a duplicate.
-* **Bounded.** A body over 4000 characters is saved to a file and replaced by its head, tail and
-  the file path, so one noisy event cannot flood the context.
+* **Bounded.** By default, a body over 4,000 characters is saved to a file and replaced by
+  its head, tail and file path.
 * **Interruptible.** Events are steer messages. If you type something while one is pending, your
   message goes first.
 
 ### Yielding instead of waiting
 
-The sleep tools end the turn without another model call. The agent really stops until
-something wakes it, which costs nothing while idle. The wake-up is either a timer event or
-any other event or message. Timers are written to the session, so a timer set before a restart
-still fires afterwards. If its time passed while pi was closed, it fires at once with a note
-saying it was late.
+The sleep tools end the turn without another model call. The agent resumes when a timer,
+another event, or a user message wakes it. Timers are persisted in the session and restored
+after a restart; overdue timers fire with a note that they were late.
 
 ### Guards keep bad habits out
 
-Two small hooks make the right behavior the easy path. One refuses commands that would hold
-the turn open and tells the model what to use instead. The other catches oversized tool
-results and spills them to a file. Details are in [Guards](#guards).
+A bash guard catches common blocking commands and suggests a non-blocking alternative. A
+result guard spills oversized tool output to a file. See [Guards](#guards) for their limits.
 
 ### Threads, context and isolation
 
-`spawn_thread` starts a child agent in its own tmux pane and returns at once. The caller picks
-how much context the child gets: an empty history for independent work, or a fork of the
-current conversation. With `sandbox: true` the child also gets its own git worktree or jj
-workspace, so parallel edits never collide and your working directory stays untouched until
-you approve a merge. See [Threads and sandboxes](#threads-and-sandboxes).
+`spawn_thread` starts a child and returns at once. With pi-interactive-subagents, the child
+runs in a tmux pane and can start fresh or fork the current conversation. The pi-subagents
+transport runs headlessly and supports fresh context only.
+
+With `sandbox: true`, a child gets its own git worktree or jj workspace. You review and approve
+the merge into the main session; conflicts can still require manual recovery. See
+[Threads and sandboxes](#threads-and-sandboxes).
 
 ## A short walkthrough
 
@@ -119,12 +114,12 @@ You ask for a refactor and a test run in a large repository.
 6. You get a confirmation prompt. The changes land staged in your tree, uncommitted, for you
    to review and commit.
 
-At no point did the model sit in a blocked tool call, run a polling loop, or read a huge log.
+The agent can do other work or yield while the jobs and threads run, then inspect the results.
 
 ## Requirements
 
 * pi 1.4 or newer
-* Node 24 or newer (the tests run TypeScript directly)
+* Node 24 or newer
 * For threads: pi-interactive-subagents (needs tmux) or pi-subagents. Jobs, timers and the guards work without either.
 * For sandboxes: git, or [jj](https://jj-vcs.dev)
 
@@ -136,8 +131,10 @@ Install from [npm](https://www.npmjs.com/package/pi-infinity):
 pi install npm:pi-infinity
 ```
 
-This installs pi-infinity only. For threads, install pi-interactive-subagents or pi-subagents
-separately; missing thread agents are linked on startup. You can also install
+This installs pi-infinity only. For threads, install
+[pi-interactive-subagents](https://github.com/amosblomqvist/pi-interactive-subagents) or
+[pi-subagents](https://github.com/amosblomqvist/pi-subagents) separately; missing thread agents
+are linked on startup. You can also install
 `git:github.com/AliensToEarth/pi-infinity` directly.
 
 Alternatively, run `./scripts/install.sh` from a checkout to install pi-infinity and, if
@@ -151,11 +148,6 @@ After CI passes, pushes to `main` publish the version in `package.json` if it is
 on npm. npm versions are immutable: bump the version for each release; pushes without a version
 bump are skipped. Registry errors fail the job rather than being treated as a missing version.
 
-Configure [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for the package:
-select GitHub Actions, owner `AliensToEarth`, repository `pi-infinity`, workflow `ci.yml`, and
-environment `npm-publish`, with direct publishing allowed. Configure the matching GitHub
-environment and any desired branch or reviewer protections. No npm token is required.
-
 ## Tools
 
 | Tool | Purpose |
@@ -168,7 +160,7 @@ environment and any desired branch or reviewer protections. No npm token is requ
 | `sleep_until` | Same, for a wall clock time in an IANA zone. |
 | `sleep_until_event` | Yield with nothing scheduled and wake on any event or user message. |
 | `timer_cancel` | Cancel timers. |
-| `spawn_thread` | Child thread in a tmux pane. `child_of` stack check, `fresh_context`, `sandbox`. |
+| `spawn_thread` | Start a child thread with an optional fresh context and sandbox. |
 | `assess_coverage` | Compare assigned and reported line ranges, without verifying source files. |
 | `send_message_to_child` | Message a running direct child. |
 | `squash_sandbox` | Merge a child's sandbox into the caller's tree. |
@@ -177,15 +169,15 @@ environment and any desired branch or reviewer protections. No npm token is requ
 
 ### Background jobs in detail
 
-* The command runs through `/bin/sh -c` in its own process group, so a cancel also reaches
-  grandchildren.
+* The command runs through `/bin/sh -c` in its own process group. Cancellation targets the
+  group; descendants of an already-exited shell may survive.
 * All output goes to a log file. `bg_output` reads the tail without waiting, or a byte range
   from an offset, at most 8000 bytes per call.
 * `watch` takes regex sources. Matching lines are batched and sent as `job_match` events, at
   most six per minute per job by default, so a chatty stream stays cheap. Further matches are
   counted and summarized in the exit event. Set `associative: true` when every match belongs in
   the conversation and the rate limit should be off.
-* `timeout_seconds` stops a job that runs too long. At most eight jobs run at once.
+* `timeout_seconds` stops a job that runs too long. By default, at most eight jobs run at once.
 * A user interrupt does not cancel jobs, because background work is the point. Jobs are
   cancelled when the session ends.
 
@@ -199,9 +191,9 @@ points to `bg_run` or `sleep`. It is deliberately narrow:
 * Commands that are backgrounded with `&`, or wrapped in `nohup`, `setsid` or `timeout`, pass.
 * Short sleeps pass. The limit is 20 seconds.
 
-Bash calls that have no timeout get one of 180 seconds.
+By default, bash calls that have no timeout get one of 180 seconds.
 
-**Result guard.** A tool result over 40000 characters is saved to a file and replaced by its
+**Result guard.** By default, a tool result over 40,000 characters is saved to a file and replaced by its
 head, tail and the path, with a hint to page through it with `read`. `read` itself is exempt,
 so the saved file can be read in pieces without being spilled again.
 
@@ -395,4 +387,4 @@ Read [`AGENTS.md`](AGENTS.md) first. The layout is in section 3 of `SPEC.md`.
 
 ## License
 
-MIT
+[MIT](LICENSE)
