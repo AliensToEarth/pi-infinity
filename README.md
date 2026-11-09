@@ -130,14 +130,20 @@ At no point did the model sit in a blocked tool call, run a polling loop, or rea
 
 ## Install
 
-From a checkout, run `./scripts/install.sh` once. It installs pi-infinity and, if missing,
-pi-interactive-subagents, and links the thread agents. It requires pi, Node 24+, git and tmux;
-start or reload pi inside tmux to use interactive threads. Existing packages and agent files
-are preserved, with conflicts reported. No additional setup commands are needed.
+Install from [npm](https://www.npmjs.com/package/pi-infinity):
 
-Once published, install from npm with `pi install npm:pi-infinity`. You can also install
-`git:github.com/AliensToEarth/pi-infinity` directly. These package-manager installs include
-only pi-infinity: install a thread transport separately; missing agents are linked on startup.
+```sh
+pi install npm:pi-infinity
+```
+
+This installs pi-infinity only. For threads, install pi-interactive-subagents or pi-subagents
+separately; missing thread agents are linked on startup. You can also install
+`git:github.com/AliensToEarth/pi-infinity` directly.
+
+Alternatively, run `./scripts/install.sh` from a checkout to install pi-infinity and, if
+missing, pi-interactive-subagents, and link the thread agents in one step. It requires pi,
+Node 24+, git and tmux; start or reload pi inside tmux to use interactive threads. Existing
+packages and agent files are preserved, with conflicts reported.
 
 ### Publishing
 
@@ -148,9 +154,7 @@ bump are skipped. Registry errors fail the job rather than being treated as a mi
 Configure [npm trusted publishing](https://docs.npmjs.com/trusted-publishers/) for the package:
 select GitHub Actions, owner `AliensToEarth`, repository `pi-infinity`, workflow `ci.yml`, and
 environment `npm-publish`, with direct publishing allowed. Configure the matching GitHub
-environment and any desired branch or reviewer protections. No npm token is required. If npm
-requires an existing package before trusted-publisher setup, publish the first version manually
-with `npm publish --access public` after running `./check.bash` and `npm pack --dry-run`.
+environment and any desired branch or reviewer protections. No npm token is required.
 
 ## Tools
 
