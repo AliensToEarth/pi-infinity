@@ -130,10 +130,13 @@ At no point did the model sit in a blocked tool call, run a polling loop, or rea
 
 ## Install
 
-Install `git:github.com/AliensToEarth/pi-infinity` with pi's package manager. On startup,
-pi-infinity links its missing thread agent definitions automatically. Existing agent files
-and symlinks are never replaced; conflicts are reported. Install pi-interactive-subagents or
-pi-subagents separately if you want threads.
+From a checkout, run `./scripts/install.sh` once. It installs pi-infinity and, if missing,
+pi-interactive-subagents, and links the thread agents. It requires pi, Node 24+, git and tmux;
+start or reload pi inside tmux to use interactive threads. Existing packages and agent files
+are preserved, with conflicts reported. No additional setup commands are needed.
+
+Alternatively, installing `git:github.com/AliensToEarth/pi-infinity` directly with pi installs
+only this package. Install a thread transport separately; missing agents are linked on startup.
 
 ## Tools
 

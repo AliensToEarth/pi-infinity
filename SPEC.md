@@ -179,7 +179,7 @@ extensions/
 agents/
   thread-fresh.md     subagent definition, session-mode standalone
   thread-fork.md      subagent definition, session-mode fork
-scripts/install.sh    compatibility wrapper for pi install; agent links are made at startup
+scripts/install.sh    installs the package and interactive transport, and links missing agents
 check.bash            single quality gate
 ```
 
@@ -291,8 +291,11 @@ R-H14. When pi-interactive-subagents is active, direct `subagent` tool calls fol
       scoped-model selection and validation. This is an extension-level guard, not a security
       boundary: external processes and sessions that do not load pi-infinity are outside it.
 R-H15. On interactive transport startup, link missing bundled thread agents into the pi agent
-      directory without overwriting existing files or symlinks. Report failures and conflicts;
-      package installation must not require running an extra shell script.
+      directory without overwriting existing files or symlinks. Report failures and conflicts.
+R-H16. `scripts/install.sh` configures the package and an interactive thread transport in one
+      invocation, preserving already-installed packages and existing agent files. It checks pi,
+      node, git and tmux before changing configuration, installs missing bundled agent links, and
+      reports installation failures. System prerequisites are not installed automatically.
 
 ## 5. Modules
 
