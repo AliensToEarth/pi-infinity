@@ -1,6 +1,6 @@
 {
   "name": "pi-infinity",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Infinity runtime design practices for pi: non-blocking work, durable timers, threads, sandboxes",
   "keywords": [
     "pi-package"
