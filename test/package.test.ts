@@ -9,6 +9,7 @@ test("npm package contains the extension, thread agents, and installation docume
     "package.json",
     "LICENSE",
     "README.md",
+    "assets/how-it-works.svg",
     "extensions/index.ts",
     "extensions/subagents-bridge.ts",
     "agents/thread-fresh.md",

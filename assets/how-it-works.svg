@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 300" role="img" aria-labelledby="title desc">
+  <title id="title">How pi-infinity works</title>
+  <desc id="desc">The agent starts work and yields. A job, timer, or child thread runs independently. An event returns the result and wakes the agent.</desc>
+  <rect width="1080" height="300" rx="24" fill="#17191f"/>
+  <text x="48" y="55" fill="#aab0bf" font-family="system-ui, -apple-system, sans-serif" font-size="14" font-weight="600" letter-spacing="2">THE FLOW</text>
+  <g font-family="system-ui, -apple-system, sans-serif">
+    <rect x="48" y="85" width="285" height="155" rx="16" fill="#252832"/>
+    <circle cx="83" cy="120" r="15" fill="#b8c5ff"/>
+    <text x="83" y="125" text-anchor="middle" fill="#202b50" font-size="14" font-weight="700">1</text>
+    <text x="66" y="166" fill="#f1f1f5" font-size="21" font-weight="600">Start &amp; yield</text>
+    <text x="66" y="197" fill="#b9bdca" font-size="15">The agent starts work</text>
+    <text x="66" y="219" fill="#b9bdca" font-size="15">and can move on.</text>
+    <path d="M348 162h24m-7-7 7 7-7 7" fill="none" stroke="#858d9e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="388" y="85" width="304" height="155" rx="16" fill="#252832"/>
+    <circle cx="423" cy="120" r="15" fill="#9ed6c7"/>
+    <text x="423" y="125" text-anchor="middle" fill="#153a32" font-size="14" font-weight="700">2</text>
+    <text x="406" y="166" fill="#f1f1f5" font-size="21" font-weight="600">Work happens</text>
+    <text x="406" y="197" fill="#b9bdca" font-size="15">A job, timer, or child thread</text>
+    <text x="406" y="219" fill="#b9bdca" font-size="15">runs independently.</text>
+    <path d="M707 162h24m-7-7 7 7-7 7" fill="none" stroke="#858d9e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect x="747" y="85" width="285" height="155" rx="16" fill="#252832"/>
+    <circle cx="782" cy="120" r="15" fill="#efc2a1"/>
+    <text x="782" y="125" text-anchor="middle" fill="#4d2a17" font-size="14" font-weight="700">3</text>
+    <text x="765" y="166" fill="#f1f1f5" font-size="21" font-weight="600">Resume</text>
+    <text x="765" y="197" fill="#b9bdca" font-size="15">An event delivers the result</text>
+    <text x="765" y="219" fill="#b9bdca" font-size="15">and wakes the agent.</text>
+  </g>
+</svg>
