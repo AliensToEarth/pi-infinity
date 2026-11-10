@@ -129,6 +129,35 @@ test("R-H sandbox recovery requires its backend and preserves the branch on clos
   assert.equal(f.files.read(id), null);
 });
 
+test("R-S5 nested jj squash reports uncommitted and no-op results accurately", async (t) => {
+  for (const commit of [false, true]) {
+    await t.test(`commit: ${commit}`, async (t) => {
+      const f = fixture(t);
+      const b = { ...backend(f.dir), name: "jj" };
+      b.squashInto = async (_target, _source, options) => {
+        assert.equal(options.commit, commit);
+        return { ok: true, filesChanged: commit ? 0 : 1 };
+      };
+      const parent: ThreadRecord = {
+        id: "t-aaaaaa",
+        parentId: "root",
+        stack: ["root", "t-aaaaaa"],
+        instructions: "parent",
+        fresh: true,
+        createdAt: 1,
+        status: "running",
+        sandbox: { id: "t-aaaaaa", branch: "parent", path: f.dir, base: "base", repoRoot: f.dir },
+      };
+      const identity: ThreadIdentity = { id: parent.id, stack: parent.stack, parentId: "root", inboxFile: null, record: parent };
+      const service = f.make({ identity, backends: [b] });
+      const { id } = await service.spawn({ instructions: "child", child_of: parent.stack, sandbox: true }, f.io());
+      await service.childExited(id);
+      const message = await service.squash(id, { commit }, f.io());
+      assert.match(message, commit ? /no changes to commit/ : /left in your working-copy change/);
+    });
+  }
+});
+
 test("R-H recovery isolates nested parents and rejects malformed ancestry", (t) => {
   const f = fixture(t);
   const parent = "t-aaaaaa";

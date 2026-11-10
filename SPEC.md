@@ -544,8 +544,10 @@ R-S4. The `child_closed` event lists `git diff --stat` against the base and the 
 R-S5. `squash_sandbox` rejects running children and children still finalizing their sandbox;
       only after finalization completes may it merge the child branch into the caller's worktree with
       `git merge --squash`. If the caller is a sandboxed thread, the result is committed
-      (same rules as R-S3). If the caller is the root session, the changes stay staged and
-      uncommitted, and the user must confirm first (`ctx.ui.confirm`). Without UI the call
+      (same rules as R-S3) unless `commit: false` is requested. An uncommitted result stays
+      staged in git or in the jj working-copy change, and the response describes it accurately.
+      If the caller is the root session, the result is always uncommitted and the user must
+      confirm first (`ctx.ui.confirm`). Without UI the call
       refuses. Both backends refuse a target with uncommitted file changes, rather than
       mixing unrelated work into the squash or its commit. Git squash refuses to overwrite
       ignored files in the target. With auto-commit disabled, git refuses to squash a dirty

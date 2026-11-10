@@ -588,11 +588,14 @@ export class ThreadService {
       );
     }
     await backend.remove(sb, { keepBranch: true });
-    const rootHow =
+    let how =
       backend.name === "jj"
         ? "left in your working-copy change, review with jj diff"
         : "staged and not committed, review with git diff --cached";
-    const how = isRoot ? rootHow : `committed${result.commitSha ? ` as ${result.commitSha.slice(0, 8)}` : ""}`;
+    if (!isRoot && opts.commit !== false) {
+      how =
+        result.filesChanged === 0 ? "no changes to commit" : `committed${result.commitSha ? ` as ${result.commitSha.slice(0, 8)}` : ""}`;
+    }
     return `Squashed ${result.filesChanged} file${result.filesChanged === 1 ? "" : "s"} from ${sb.branch} into ${target}, ${how}. The worktree was removed and the branch kept.`;
   }
 
@@ -632,19 +635,14 @@ export class ThreadService {
     if (this.discovery) clearInterval(this.discovery);
     for (const c of this.children.values()) {
       c.watcher?.stop();
-      if (c.record.status === "running") {
-        if (c.abort) {
-          // Mark closed first so the settling call does not emit into a session that is ending.
-          c.record.status = "closed";
-          c.abort();
-        }
-        if (c.abort) {
-          try {
-            this.d.files.remove(c.record.id);
-          } catch (err) {
-            this.d.logger.error("threads.dispose", err);
-          }
-        }
+      if (c.record.status !== "running" || !c.abort) continue;
+      // Mark closed first so the settling call does not emit into a session that is ending.
+      c.record.status = "closed";
+      c.abort();
+      try {
+        this.d.files.remove(c.record.id);
+      } catch (err) {
+        this.d.logger.error("threads.dispose", err);
       }
     }
   }

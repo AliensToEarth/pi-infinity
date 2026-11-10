@@ -632,6 +632,38 @@ test("R-S5 squash rejects another repository even with a matching branch name", 
   other.svc.dispose();
 });
 
+test("R-S5 nested git squash reports whether its changes were committed", async (t) => {
+  for (const commit of [false, true]) {
+    await t.test(`commit: ${commit}`, async (t) => {
+      const h = harness();
+      t.after(() => h.svc.dispose());
+      const parent = await h.svc.spawn({ instructions: "parent", child_of: ["root"], sandbox: true }, h.io);
+      const parentPath = h.launches[0].cwd as string;
+      const nested = new ThreadService({
+        identity: identify({ PI_SUBAGENT_NAME: parent.id }, h.files),
+        files: h.files,
+        sandboxes: [new GitSandbox(h.logger, { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" })],
+        emitter: new Emitter({ send: (m) => h.sent.push(m), spillDir: h.sessionDir, maxChars: 4000, seenCap: 100, logger: h.logger }),
+        config: DEFAULT_CONFIG,
+        logger: h.logger,
+      });
+      t.after(() => nested.dispose());
+      const child = await nested.spawn({ instructions: "child", child_of: ["root", parent.id], sandbox: true }, h.io);
+      writeFileSync(join(h.launches[1].cwd as string, "nested.txt"), "child work\n");
+      await nested.childExited(child.id);
+      const message = await nested.squash(child.id, { commit }, h.io);
+      if (commit) {
+        assert.match(message, /committed as [a-f0-9]{8}/);
+        assert.equal(git(parentPath, "diff", "--cached", "--name-only"), "");
+        assert.equal(git(parentPath, "show", "HEAD:nested.txt"), "child work");
+      } else {
+        assert.match(message, /staged and not committed/);
+        assert.equal(git(parentPath, "diff", "--cached", "--name-only"), "nested.txt");
+      }
+    });
+  }
+});
+
 test("R-S5 declined confirmation changes nothing", async () => {
   const h = harness();
   const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, h.io);
