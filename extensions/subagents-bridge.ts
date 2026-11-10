@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Logger } from "./lib/log.ts";
 import { agentDir } from "./runtime.ts";
-import { pickTransport, readAgentRegistry, type Transport, type TransportSetting } from "./lib/transport.ts";
+import { pickTransport, readAgentRegistry, type Transport, type TransportSetting } from "./lib/threads/transport.ts";
 
 interface SubagentsGlobal {
   registerToolExtension?: (name: string, path: string) => void;

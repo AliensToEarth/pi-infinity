@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { isThreadId, newThreadId } from "../extensions/lib/threads.ts";
+import { isThreadId, newThreadId } from "../extensions/lib/threads/protocol.ts";
 
 test("R-H0 new thread ids are unique 128-bit identifiers and legacy ids remain valid", () => {
   const ids = new Set(Array.from({ length: 10000 }, () => newThreadId()));

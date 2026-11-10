@@ -6,8 +6,8 @@ import { test } from "node:test";
 import { DEFAULT_CONFIG } from "../extensions/lib/config.ts";
 import { Emitter } from "../extensions/lib/events.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
-import { ThreadService, type ThreadIO } from "../extensions/lib/thread-service.ts";
-import { ThreadFiles, identify } from "../extensions/lib/threads.ts";
+import { ThreadService, type ThreadIO } from "../extensions/lib/threads/service.ts";
+import { ThreadFiles, identify } from "../extensions/lib/threads/protocol.ts";
 
 function setup() {
   const dir = mkdtempSync(join(tmpdir(), "inf-deps-"));

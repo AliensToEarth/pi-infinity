@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { appendInbox, inboxPath } from "../extensions/lib/threads.ts";
+import { appendInbox, inboxPath } from "../extensions/lib/threads/inbox.ts";
 import { createRuntime } from "../extensions/runtime.ts";
 
 test("R-H8 runtime replacement restores only unacknowledged child reports on its session branch", async (t) => {

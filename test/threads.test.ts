@@ -7,25 +7,20 @@ import { test } from "node:test";
 import { DEFAULT_CONFIG } from "../extensions/lib/config.ts";
 import { Emitter, type OutgoingMessage } from "../extensions/lib/events.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
-import { GitSandbox } from "../extensions/lib/sandbox.ts";
-import { JjSandbox } from "../extensions/lib/sandbox-jj.ts";
+import { GitSandbox } from "../extensions/lib/sandbox/git.ts";
+import { JjSandbox } from "../extensions/lib/sandbox/jj.ts";
 import { hasJj } from "./helpers.ts";
-import { ThreadService, type ThreadIO } from "../extensions/lib/thread-service.ts";
+import { ThreadService, type ThreadIO } from "../extensions/lib/threads/service.ts";
 import {
-  AGENT_FORK,
-  AGENT_FRESH,
   INBOX_CHUNK_BYTES,
   INBOX_MAX_RECORD_CHARS,
   InboxWatcher,
-  ThreadFiles,
   appendInbox,
-  checkChildOf,
-  frameTask,
-  identify,
   inboxPath,
   nextSeq,
   type InboxLine,
-} from "../extensions/lib/threads.ts";
+} from "../extensions/lib/threads/inbox.ts";
+import { AGENT_FORK, AGENT_FRESH, ThreadFiles, checkChildOf, frameTask, identify } from "../extensions/lib/threads/protocol.ts";
 
 function tmp(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));

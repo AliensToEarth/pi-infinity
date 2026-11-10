@@ -6,8 +6,8 @@ import { test } from "node:test";
 import { DEFAULT_CONFIG, loadConfig } from "../extensions/lib/config.ts";
 import { Emitter } from "../extensions/lib/events.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
-import { ThreadService, type ThreadIO } from "../extensions/lib/thread-service.ts";
-import { identify, ThreadFiles } from "../extensions/lib/threads.ts";
+import { ThreadService, type ThreadIO } from "../extensions/lib/threads/service.ts";
+import { identify, ThreadFiles } from "../extensions/lib/threads/protocol.ts";
 
 function setup(maxLaunches = 0, windowSeconds = 0) {
   const dir = mkdtempSync(join(tmpdir(), "launch-budget-"));

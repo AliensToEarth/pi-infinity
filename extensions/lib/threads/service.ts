@@ -1,27 +1,23 @@
-import { AdaptiveConcurrency } from "./adaptive-concurrency.ts";
-import type { InfinityConfig } from "./config.ts";
-import type { Emitter } from "./events.ts";
-import type { Logger } from "./log.ts";
-import type { SandboxBackend } from "./sandbox.ts";
-import { renderReport } from "./thread-reports.ts";
+import { AdaptiveConcurrency } from "./concurrency.ts";
+import type { InfinityConfig } from "../config.ts";
+import type { Emitter } from "../events.ts";
+import type { Logger } from "../log.ts";
+import type { SandboxBackend } from "../sandbox/types.ts";
+import { InboxWatcher, appendInbox, inboxPath, nextSeq, type InboxLine } from "./inbox.ts";
+import { renderReport } from "./reports.ts";
 import { NO_TRANSPORT_MESSAGE } from "./transport.ts";
 import {
   AGENT_FORK,
   AGENT_FRESH,
-  InboxWatcher,
   ROOT_ID,
-  appendInbox,
   checkChildOf,
   frameTask,
-  inboxPath,
   newThreadId,
   isThreadId,
-  nextSeq,
-  type InboxLine,
   type ThreadFiles,
   type ThreadIdentity,
   type ThreadRecord,
-} from "./threads.ts";
+} from "./protocol.ts";
 
 /** What the adapter provides for one call. Kept narrow so tests can fake it. */
 export interface DetachedLaunch {

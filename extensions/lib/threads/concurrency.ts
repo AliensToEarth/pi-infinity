@@ -1,4 +1,4 @@
-import type { InfinityConfig } from "./config.ts";
+import type { InfinityConfig } from "../config.ts";
 
 type Settings = InfinityConfig["threads"]["adaptiveConcurrency"];
 

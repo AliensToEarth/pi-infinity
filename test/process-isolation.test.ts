@@ -5,9 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_CONFIG } from "../extensions/lib/config.ts";
-import { JobManager } from "../extensions/lib/jobs.ts";
+import { JobManager } from "../extensions/lib/jobs/manager.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
-import { isolatedCommand } from "../extensions/lib/process-isolation.ts";
+import { isolatedCommand } from "../extensions/lib/jobs/isolation.ts";
 
 test("R-J13 unsupported platforms fail closed", () => {
   assert.throws(() => isolatedCommand("echo unsafe", tmpdir(), "freebsd"), /unavailable/);

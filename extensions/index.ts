@@ -1,8 +1,8 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { blockMessage, classifyBash } from "./lib/blocking.ts";
+import { blockMessage, classifyBash } from "./lib/jobs/blocking.ts";
 import { guardContent, type Part } from "./lib/overflow.ts";
-import { scopedModel } from "./lib/scoped-model.ts";
-import { ThreadFiles, identify } from "./lib/threads.ts";
+import { scopedModel } from "./lib/threads/scoped-model.ts";
+import { ThreadFiles, identify } from "./lib/threads/protocol.ts";
 import { registerEventRenderer } from "./render.ts";
 import { agentDir, createRuntime, type Runtime } from "./runtime.ts";
 import { registerWithSubagents } from "./subagents-bridge.ts";

@@ -7,11 +7,11 @@ import { test } from "node:test";
 import { DEFAULT_CONFIG, mergeConfig, type InfinityConfig } from "../extensions/lib/config.ts";
 import { Emitter, type OutgoingMessage } from "../extensions/lib/events.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
-import { GitSandbox } from "../extensions/lib/sandbox.ts";
-import { BUILTIN_TOOLS, FALLBACK_MODEL, launchViaSubagents, promptBody, type ExecuteTool } from "../extensions/lib/subagents-launch.ts";
-import { ThreadService, type DetachedLaunch, type ThreadIO } from "../extensions/lib/thread-service.ts";
-import { ThreadFiles, frameTask, identify } from "../extensions/lib/threads.ts";
-import { NO_TRANSPORT_MESSAGE, pickTransport, readAgentRegistry, type AgentRegistry } from "../extensions/lib/transport.ts";
+import { GitSandbox } from "../extensions/lib/sandbox/git.ts";
+import { BUILTIN_TOOLS, FALLBACK_MODEL, launchViaSubagents, promptBody, type ExecuteTool } from "../extensions/lib/threads/subagents.ts";
+import { ThreadService, type DetachedLaunch, type ThreadIO } from "../extensions/lib/threads/service.ts";
+import { ThreadFiles, frameTask, identify } from "../extensions/lib/threads/protocol.ts";
+import { NO_TRANSPORT_MESSAGE, pickTransport, readAgentRegistry, type AgentRegistry } from "../extensions/lib/threads/transport.ts";
 
 function tmp(prefix: string): string {
   return realpathSync(mkdtempSync(join(tmpdir(), prefix)));

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { Type } from "typebox";
-import type { Job } from "../lib/jobs.ts";
+import type { Job } from "../lib/jobs/manager.ts";
 import type { Runtime } from "../runtime.ts";
 import { tool, type ToolDef } from "./types.ts";
 

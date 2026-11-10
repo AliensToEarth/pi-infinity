@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { scopedModel } from "../extensions/lib/scoped-model.ts";
+import { scopedModel } from "../extensions/lib/threads/scoped-model.ts";
 
 const scoped = [{ model: { provider: "one", id: "m" } }, { model: { provider: "two", id: "n" } }];
 

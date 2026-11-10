@@ -274,7 +274,9 @@ npm run smoke:subagents      # real pi and a real model, thread on pi-subagents 
 npm run smoke:interactive    # same, on pi-interactive-subagents
 ```
 
-Read [`AGENTS.md`](AGENTS.md) first. The layout is in section 3 of [`SPEC.md`](SPEC.md).
+Read [`AGENTS.md`](AGENTS.md) first. Runtime cores live in `extensions/lib/`, grouped into
+`jobs/`, `sandbox/`, and `threads/`; pi-facing tool definitions are in `extensions/tools/`.
+The full layout is in section 3 of [`SPEC.md`](SPEC.md).
 After CI passes, pushes to `main` publish new `package.json` versions to npm and GitHub
 Packages; existing versions are skipped. Bump the version for each release.
 

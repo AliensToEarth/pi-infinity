@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_CONFIG } from "../extensions/lib/config.ts";
 import type { EventInput } from "../extensions/lib/events.ts";
-import { JobManager, compileWatch } from "../extensions/lib/jobs.ts";
+import { JobManager, compileWatch } from "../extensions/lib/jobs/manager.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
 
 function setup(over: Partial<typeof DEFAULT_CONFIG.jobs> = {}) {

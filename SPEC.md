@@ -162,32 +162,30 @@ G6. The repo follows the same hygiene Infinity does: one gate script, tests, tes
 ```
 extensions/
   index.ts            wiring, lifecycle, status line, /infinity command
+  runtime.ts          session services and recovery
+  render.ts           event rendering
+  subagents-bridge.ts subagent integration
   lib/
+    jobs/             background processes, command classification, write isolation
+    sandbox/          shared sandbox contract and git and jj backends
+    threads/          lifecycle, protocol, bounded inbox, transport, and reports
     config.ts         config files and defaults
+    coverage.ts       assessment of untrusted coverage claims
     events.ts         InfinityEvent, formatting, dedup, spill
-    jobs.ts           JobManager (process, ring buffer, watch batching)
-    timers.ts         TimerStore, timezone math, restore from entries
-    blocking.ts       bash command classifier
-    overflow.ts       oversized tool result guard
-    threads.ts        ids, stack check, task framing, thread files, report inbox
-    sandbox.ts        SandboxBackend interface and git backend
     log.ts            error log (no silent catch)
-  tools/
-    jobs.ts           pi tool definitions for bg_*
-    sleep.ts          pi tool definitions for sleep*
-    threads.ts        pi tool definitions for threads and sandbox tools
-agents/
-  thread-fresh.md     subagent definition, session-mode standalone
-  thread-fork.md      subagent definition, session-mode fork
+    overflow.ts       oversized tool result guard
+    timers.ts         TimerStore, timezone math, restore from entries
+  tools/              pi tool definitions for jobs, timers, threads, and coverage
+agents/               interactive and blocking subagent definitions
 scripts/install.sh    installs the package and interactive transport, and links missing agents
 check.bash            single quality gate
 ```
 
 Design rules, taken from Infinity:
 
-* Pure cores, thin adapters. Everything in `lib/` takes its clock, spawner, filesystem root
-  and emitter as parameters and never imports pi at runtime. The adapters in `tools/` and
-  `index.ts` are the only place that touches the pi API.
+* Pure cores, thin adapters. Modules in `lib/` accept the dependencies they need and never
+  import pi at runtime. The extension entry point, runtime, renderers, bridge, and `tools/`
+  adapt those cores to the pi API.
 * One message type. Every asynchronous outcome is emitted through one `Emitter` that
   builds an `infinity-event` message (section 4).
 * No silent failure. Every `catch` must rethrow, return an error value, or call
@@ -467,7 +465,7 @@ R-H5. `report_to_parent` appends one JSON line `{type:"report", seq, text, at}`.
       rest of that record is skipped up to its newline, and later records still arrive. The child
       rejects its own oversized reports before writing, so a rejected close does not terminate. A
       `stop()` during a pass ends that pass, so no line is delivered after the watcher stops.
-      Both limits are exported by `extensions/lib/threads.ts` and may be lowered per watcher.
+      Both limits are exported by `extensions/lib/threads/inbox.ts` and may be lowered per watcher.
       Sequence numbers come from a per-file counter that counts only the bytes appended since
       the previous call without storing a partial line, so reports do not repeatedly rescan the
       inbox; the counter restarts when the file is replaced, shrinks below the counted offset or
@@ -531,7 +529,7 @@ message)`, `diffStat(sb)`, `squashInto(target, sb, {commit})`, `remove(sb, {keep
 `GitSandbox` (worktrees) and `JjSandbox` (workspaces and bookmarks). `sandbox.backend` is
 `auto` (default, jj wins when the directory is a jj repository, otherwise git), `git` or `jj`.
 The rules below are written for git. The jj backend maps each one to the closest jj
-operation, and the mapping is documented in `extensions/lib/sandbox-jj.ts`.
+operation, and the mapping is documented in `extensions/lib/sandbox/jj.ts`.
 
 R-S1. `spawn_thread({sandbox:true})` in a git repo runs `git worktree add -b sandbox-<id>
       <root>/<id> <base>`. Base is the parent's sandbox branch if the parent has one, else

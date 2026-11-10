@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { inspect } from "node:util";
-import type { DetachedLaunch } from "./thread-service.ts";
+import type { DetachedLaunch } from "./service.ts";
 import type { AgentRegistry } from "./transport.ts";
 
 export const BUILTIN_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];

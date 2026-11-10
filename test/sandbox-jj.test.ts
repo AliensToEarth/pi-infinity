@@ -12,8 +12,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { test } from "node:test";
-import { JjSandbox } from "../extensions/lib/sandbox-jj.ts";
-import { validateSandboxId } from "../extensions/lib/sandbox.ts";
+import { JjSandbox } from "../extensions/lib/sandbox/jj.ts";
+import { validateSandboxId } from "../extensions/lib/sandbox/types.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
 import { hasJj } from "./helpers.ts";
 

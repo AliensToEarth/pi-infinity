@@ -5,12 +5,12 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { loadConfig, type InfinityConfig } from "./lib/config.ts";
 import { Emitter, eventIdOf, isEventInput, type EventInput } from "./lib/events.ts";
-import { JobManager } from "./lib/jobs.ts";
+import { JobManager } from "./lib/jobs/manager.ts";
 import { createLogger, type Logger } from "./lib/log.ts";
-import { GitSandbox } from "./lib/sandbox.ts";
-import { JjSandbox } from "./lib/sandbox-jj.ts";
-import { ThreadService } from "./lib/thread-service.ts";
-import { ThreadFiles, identify } from "./lib/threads.ts";
+import { GitSandbox } from "./lib/sandbox/git.ts";
+import { JjSandbox } from "./lib/sandbox/jj.ts";
+import { ThreadService } from "./lib/threads/service.ts";
+import { ThreadFiles, identify } from "./lib/threads/protocol.ts";
 import { TimerStore, type TimerEntry } from "./lib/timers.ts";
 
 export interface Runtime {

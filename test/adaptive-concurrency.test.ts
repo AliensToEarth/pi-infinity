@@ -3,12 +3,12 @@ import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { AdaptiveConcurrency } from "../extensions/lib/adaptive-concurrency.ts";
+import { AdaptiveConcurrency } from "../extensions/lib/threads/concurrency.ts";
 import { DEFAULT_CONFIG, loadConfig } from "../extensions/lib/config.ts";
 import { Emitter } from "../extensions/lib/events.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
-import { ThreadService, type ThreadIO } from "../extensions/lib/thread-service.ts";
-import { identify, ThreadFiles } from "../extensions/lib/threads.ts";
+import { ThreadService, type ThreadIO } from "../extensions/lib/threads/service.ts";
+import { identify, ThreadFiles } from "../extensions/lib/threads/protocol.ts";
 
 test("R-H11 adaptive limits increase on success and decrease on failure within bounds", () => {
   const limiter = new AdaptiveConcurrency({ enabled: true, min: 1, initial: 2, max: 3, successesToIncrease: 2, decreaseFactor: 0.5 });

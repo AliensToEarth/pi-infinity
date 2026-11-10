@@ -1,4 +1,4 @@
-import type { Coverage, Evidence } from "./thread-reports.ts";
+import type { Coverage, Evidence } from "./threads/reports.ts";
 
 export interface Range {
   source: string;

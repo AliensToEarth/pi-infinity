@@ -8,9 +8,8 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import type { Logger } from "./log.ts";
-import { validateSandboxId } from "./sandbox.ts";
-import type { Sandbox, SandboxBackend, SandboxInfo, SquashResult } from "./sandbox.ts";
+import type { Logger } from "../log.ts";
+import { validateSandboxId, type Sandbox, type SandboxBackend, type SandboxInfo, type SquashResult } from "./types.ts";
 
 const execFileAsync = promisify(execFile);
 

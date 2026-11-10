@@ -1,10 +1,10 @@
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { appendFileSync, closeSync, mkdirSync, openSync, readSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { InfinityConfig } from "./config.ts";
-import type { EventInput } from "./events.ts";
-import type { Logger } from "./log.ts";
-import { isolatedCommand } from "./process-isolation.ts";
+import type { InfinityConfig } from "../config.ts";
+import type { EventInput } from "../events.ts";
+import type { Logger } from "../log.ts";
+import { isolatedCommand } from "./isolation.ts";
 
 export type JobStatus = "running" | "exited" | "signaled" | "cancelled" | "timeout" | "error";
 

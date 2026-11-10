@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { blockMessage, classifyBash } from "../extensions/lib/blocking.ts";
+import { blockMessage, classifyBash } from "../extensions/lib/jobs/blocking.ts";
 
 const blocked = (cmd: string) => classifyBash(cmd, 20).blocked;
 

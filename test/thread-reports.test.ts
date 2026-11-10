@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { encodeReport, renderReport } from "../extensions/lib/thread-reports.ts";
+import { encodeReport, renderReport } from "../extensions/lib/threads/reports.ts";
 
 test("R-H6a structured reports round-trip and render concisely", () => {
   const text = encodeReport(undefined, { summary: "Done", files: ["a.ts"], tests: ["passed"], blockers: [] }, true)!;

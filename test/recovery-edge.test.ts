@@ -6,9 +6,10 @@ import { test, type TestContext } from "node:test";
 import { DEFAULT_CONFIG } from "../extensions/lib/config.ts";
 import { Emitter, type OutgoingMessage } from "../extensions/lib/events.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
-import type { SandboxBackend } from "../extensions/lib/sandbox.ts";
-import { ThreadService, type ThreadIO } from "../extensions/lib/thread-service.ts";
-import { ThreadFiles, appendInbox, identify, inboxPath, type ThreadIdentity, type ThreadRecord } from "../extensions/lib/threads.ts";
+import type { SandboxBackend } from "../extensions/lib/sandbox/types.ts";
+import { ThreadService, type ThreadIO } from "../extensions/lib/threads/service.ts";
+import { appendInbox, inboxPath } from "../extensions/lib/threads/inbox.ts";
+import { ThreadFiles, identify, type ThreadIdentity, type ThreadRecord } from "../extensions/lib/threads/protocol.ts";
 
 function fixture(t: TestContext) {
   const dir = mkdtempSync(join(tmpdir(), "recovery-edge-"));

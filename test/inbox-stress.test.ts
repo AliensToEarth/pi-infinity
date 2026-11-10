@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { memoryLogger } from "../extensions/lib/log.ts";
-import { InboxWatcher, nextSeq } from "../extensions/lib/threads.ts";
+import { InboxWatcher, nextSeq } from "../extensions/lib/threads/inbox.ts";
 
 test("R-H5 randomized byte splits preserve valid bounded records and skip corrupt ones", (t) => {
   const dir = mkdtempSync(join(tmpdir(), "pi-inbox-splits-"));
@@ -48,7 +48,7 @@ test("R-H5 a huge unterminated inbox fits within a bounded heap", (t) => {
   truncateSync(file, 96 * 1024 * 1024);
   const script = `
     import assert from "node:assert/strict";
-    import { nextSeq, InboxWatcher } from "./extensions/lib/threads.ts";
+    import { nextSeq, InboxWatcher } from "./extensions/lib/threads/inbox.ts";
     let errors = 0;
     assert.equal(nextSeq(process.argv[1]), 1);
     const watcher = new InboxWatcher({ file: process.argv[1], onLine: () => assert.fail("unexpected record"), logger: { error: () => errors++ } });

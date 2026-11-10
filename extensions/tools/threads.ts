@@ -1,10 +1,10 @@
 import { Type } from "typebox";
 import { fileURLToPath } from "node:url";
-import { loadBlockingPrompt, launchViaSubagents } from "../lib/subagents-launch.ts";
-import { encodeReport } from "../lib/thread-reports.ts";
-import { scopedModel } from "../lib/scoped-model.ts";
-import type { ThreadIO, ThreadService } from "../lib/thread-service.ts";
-import { pickTransport, readAgentRegistry, type TransportSetting } from "../lib/transport.ts";
+import { loadBlockingPrompt, launchViaSubagents } from "../lib/threads/subagents.ts";
+import { encodeReport } from "../lib/threads/reports.ts";
+import { scopedModel } from "../lib/threads/scoped-model.ts";
+import type { ThreadIO, ThreadService } from "../lib/threads/service.ts";
+import { pickTransport, readAgentRegistry, type TransportSetting } from "../lib/threads/transport.ts";
 import { tool, type ToolDef } from "./types.ts";
 
 type ExecuteTool = (

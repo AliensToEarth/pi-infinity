@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { test } from "node:test";
-import { GitSandbox, validateSandboxId } from "../extensions/lib/sandbox.ts";
+import { GitSandbox } from "../extensions/lib/sandbox/git.ts";
+import { validateSandboxId } from "../extensions/lib/sandbox/types.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
 
 const exec = promisify(execFile);
