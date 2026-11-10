@@ -94,12 +94,7 @@ export class TimerStore {
       this.fireNow(p.timer);
       return;
     }
-    p.handle = this.deps.setTimeout(() => this.onWake(id), Math.min(delay, MAX_TIMEOUT_MS));
-  }
-
-  private onWake(id: string): void {
-    // A cancelled or fired timer left nothing pending, so a stale wake is a no-op.
-    this.arm(id);
+    p.handle = this.deps.setTimeout(() => this.arm(id), Math.min(delay, MAX_TIMEOUT_MS));
   }
 
   private fireNow(timer: TimerRecord): boolean {
@@ -109,7 +104,7 @@ export class TimerStore {
     } catch (err) {
       this.deps.logger.error("timers", err);
       const p = this.pending.get(timer.id);
-      if (p !== undefined) p.handle = this.deps.setTimeout(() => this.onWake(timer.id), RETRY_MS);
+      if (p !== undefined) p.handle = this.deps.setTimeout(() => this.arm(timer.id), RETRY_MS);
       return false;
     }
     this.pending.delete(timer.id);

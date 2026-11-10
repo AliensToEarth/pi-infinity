@@ -414,7 +414,7 @@ export class ThreadService {
       });
       return;
     }
-    if (line.type === "closed") void this.onClosed(child, line, source);
+    void this.onClosed(child, line, source);
   }
 
   private sourceOf(child: Child): { tool: string; callId?: string; args: unknown } {

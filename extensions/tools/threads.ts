@@ -223,7 +223,3 @@ export function childTools(svc: () => ThreadService): ToolDef[] {
 
   return [report, close];
 }
-
-export function textFromOutcome(result: { content: Array<{ type: string; text?: string }> }): string {
-  return textOf(result);
-}

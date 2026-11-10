@@ -108,6 +108,61 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
     assert.equal((await xgit(repo, env, ["status", "--porcelain"])).trim(), "");
   });
 
+  t.test("R-S4 R-S5 stale workspace commands refresh once, including with -R", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const original = backend(env);
+    const sb = await original.create({ cwd: repo, id: "stale" });
+    writeFileSync(join(sb.path, "work.txt"), "work\n");
+    await original.commitAll(sb, "work");
+    const bin = tempDir(t);
+    const realJj = (await exec("which", ["jj"], { env, encoding: "utf8" })).stdout.trim();
+    const marker = join(bin, "triggered");
+    const log = join(bin, "calls");
+    writeFileSync(
+      join(bin, "jj"),
+      `#!/bin/sh
+printf '%s\\n' "$*" >> "$JJ_TEST_LOG"
+case "$JJ_TEST_MODE:$*" in
+  fail:*"diff --stat"*) echo 'permission denied' >&2; exit 1;;
+  stuck:*"diff --stat"*|refresh:*"diff --stat"*) echo 'working copy is stale' >&2; exit 1;;
+  refresh:*"workspace update-stale"*) echo 'refresh failed' >&2; exit 1;;
+esac
+case "$*" in *"workspace update-stale"*) exit 0;; esac
+if [ ! -e "$JJ_TEST_MARKER" ]; then
+  case "$JJ_TEST_MODE:$*" in
+    local:*"diff --stat"*|remote:*" -R "*)
+      : > "$JJ_TEST_MARKER"
+      printf '%s\\n' 'working copy is stale' >&2
+      exit 1;;
+  esac
+fi
+exec "$JJ_TEST_REAL" "$@"
+`,
+    );
+    chmodSync(join(bin, "jj"), 0o755);
+    const wrapped = (mode: string) =>
+      backend({ ...env, PATH: `${bin}:${env.PATH}`, JJ_TEST_REAL: realJj, JJ_TEST_LOG: log, JJ_TEST_MARKER: marker, JJ_TEST_MODE: mode });
+    assert.match(await wrapped("local").diffStat(sb), /work\.txt/);
+    let calls = readFileSync(log, "utf8");
+    assert.equal(calls.split("\n").filter((line) => line.includes("workspace update-stale")).length, 1);
+    rmSync(marker);
+    writeFileSync(log, "");
+    assert.equal((await wrapped("remote").squashInto(repo, sb, { commit: false })).ok, true);
+    calls = readFileSync(log, "utf8");
+    assert.equal(calls.split("\n").filter((line) => line.includes("workspace update-stale") && line.includes(`-R ${sb.path}`)).length, 1);
+    for (const [mode, error, attempts, refreshes] of [
+      ["fail", /permission denied/, 1, 0],
+      ["stuck", /working copy is stale/, 2, 1],
+      ["refresh", /refresh failed/, 1, 1],
+    ] as const) {
+      writeFileSync(log, "");
+      await assert.rejects(wrapped(mode).diffStat(sb), error);
+      calls = readFileSync(log, "utf8");
+      assert.equal(calls.split("\n").filter((line) => line.includes("diff --stat")).length, attempts);
+      assert.equal(calls.split("\n").filter((line) => line.includes("workspace update-stale")).length, refreshes);
+    }
+  });
+
   t.test("R-S7 removal preserves unsnapshotted and ignored files", async (t) => {
     const { repo, env } = await initRepo(t, { colocate: false });
     const b = backend(env);

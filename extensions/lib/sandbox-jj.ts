@@ -224,7 +224,7 @@ export class JjSandbox implements SandboxBackend {
       };
     }
     // Snapshot the source workspace before resolving its bookmark.
-    await this.jjWsR(sb.path, targetPath, ["diff", "-r", sb.branch, "--summary"]);
+    await this.jjWs(sb.path, ["diff", "-r", sb.branch, "--summary"], targetPath);
     // Squash a duplicate: rewriting the source would move its bookmark even
     // on conflict. Never restore an operation, which can erase concurrent work.
     const source = (await jj(targetPath, ["log", "-r", sb.branch, "--no-graph", "-T", "commit_id"], this.env)).trim();
@@ -376,25 +376,15 @@ export class JjSandbox implements SandboxBackend {
   // working-copy commit from the target's process, which marks the sandbox's
   // working copy stale; refresh it once and retry. update-stale preserves
   // unsnapshotted edits as a divergent change, so nothing is lost.
-  private async jjWs(wsPath: string, args: string[]): Promise<string> {
+  private async jjWs(wsPath: string, args: string[], from?: string): Promise<string> {
+    const cwd = from ?? wsPath;
+    const prefix = from === undefined ? [] : ["-R", wsPath];
     try {
-      return await jj(wsPath, args, this.env);
+      return await jj(cwd, [...prefix, ...args], this.env);
     } catch (err) {
       if (!message(err).includes("working copy is stale")) throw err;
-      await jj(wsPath, ["workspace", "update-stale"], this.env);
-      return await jj(wsPath, args, this.env);
-    }
-  }
-
-  // Same retry, but the workspace is selected with -R from another working
-  // directory.
-  private async jjWsR(wsPath: string, cwd: string, args: string[]): Promise<string> {
-    try {
-      return await jj(cwd, ["-R", wsPath, ...args], this.env);
-    } catch (err) {
-      if (!message(err).includes("working copy is stale")) throw err;
-      await jj(cwd, ["-R", wsPath, "workspace", "update-stale"], this.env);
-      return await jj(cwd, ["-R", wsPath, ...args], this.env);
+      await jj(cwd, [...prefix, "workspace", "update-stale"], this.env);
+      return await jj(cwd, [...prefix, ...args], this.env);
     }
   }
 
