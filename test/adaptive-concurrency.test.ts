@@ -46,7 +46,7 @@ test("R-H11 invalid adaptive calibration is reported and reset", () => {
   assert.deepEqual(loaded.config.threads.adaptiveConcurrency, DEFAULT_CONFIG.threads.adaptiveConcurrency);
 });
 
-test("R-H8 R-H11 shutdown during interactive launch does not register or recreate a thread", async () => {
+test("R-H8 R-H11 shutdown during interactive launch retains the child record", async () => {
   const dir = mkdtempSync(join(tmpdir(), "adaptive-shutdown-"));
   const files = new ThreadFiles(dir);
   const logger = memoryLogger();
@@ -72,7 +72,7 @@ test("R-H8 R-H11 shutdown during interactive launch does not register or recreat
   service.dispose();
   resolve({ sessionFile: join(dir, "session.jsonl") });
   await assert.rejects(pending, /session has ended/);
-  assert.equal(existsSync(files.pathFor(id)), false);
+  assert.equal(files.read(id)?.sessionFile, join(dir, "session.jsonl"));
   assert.deepEqual(service.list(), []);
   assert.deepEqual(events, []);
 });

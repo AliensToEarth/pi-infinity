@@ -15,6 +15,7 @@ import {
   frameTask,
   inboxPath,
   newThreadId,
+  isThreadId,
   nextSeq,
   type InboxLine,
   type ThreadFiles,
@@ -57,6 +58,9 @@ export interface SpawnParams {
 
 export interface ThreadServiceDeps {
   identity: ThreadIdentity;
+  parentSession?: string;
+  /** Contiguous report prefixes persisted on the active parent-session branch. */
+  reportedPrefixes?: ReadonlyMap<string, number>;
   files: ThreadFiles;
   /** Tried in order, the first one whose detect() finds a repository wins. */
   sandboxes: SandboxBackend[];
@@ -79,7 +83,11 @@ interface Child {
   outcome?: "ok" | "error";
   launchPending?: boolean;
   exitPending?: boolean;
+  recovered?: boolean;
 }
+
+// Finalizers may outlive a runtime; serialize them across replacement services.
+const finalizers = new Map<string, Promise<void>>();
 
 export class ThreadService {
   private readonly children = new Map<string, Child>();
@@ -90,11 +98,84 @@ export class ThreadService {
   private launches = 0;
   private launchReservations = 0;
   private launchWindowStart: number | undefined;
+  private discovery?: ReturnType<typeof setInterval>;
 
   constructor(d: ThreadServiceDeps) {
     this.d = d;
     this.now = d.now ?? Date.now;
     this.concurrency = new AdaptiveConcurrency(d.config.threads.adaptiveConcurrency);
+    if (d.parentSession) {
+      this.discover();
+      this.discovery = setInterval(() => this.discover(), d.pollMs ?? 1000);
+      this.discovery.unref?.();
+    }
+  }
+
+  private discover(): void {
+    if (this.disposed || !this.d.parentSession) return;
+    let records: ThreadRecord[];
+    try {
+      records = this.d.files.list(this.d.logger);
+    } catch (err) {
+      this.d.logger.error("threads.recover", err);
+      return;
+    }
+    for (const record of records) {
+      const stack = this.d.identity.stack;
+      if (
+        record.parentSession !== this.d.parentSession ||
+        record.parentId !== this.d.identity.id ||
+        !isThreadId(record.id) ||
+        record.id === ROOT_ID ||
+        record.transport === "subagents" ||
+        record.status !== "running" ||
+        typeof record.instructions !== "string" ||
+        typeof record.fresh !== "boolean" ||
+        !Number.isFinite(record.createdAt) ||
+        (record.sessionFile !== undefined && typeof record.sessionFile !== "string") ||
+        (record.callId !== undefined && typeof record.callId !== "string") ||
+        (record.targetRoot !== undefined && typeof record.targetRoot !== "string") ||
+        (record.sandbox &&
+          (typeof record.sandbox !== "object" ||
+            [record.sandbox.id, record.sandbox.branch, record.sandbox.path, record.sandbox.base, record.sandbox.repoRoot].some(
+              (value) => typeof value !== "string",
+            ))) ||
+        !Array.isArray(record.stack) ||
+        record.stack.length !== stack.length + 1 ||
+        !stack.every((id, i) => record.stack[i] === id) ||
+        record.stack[stack.length] !== record.id
+      )
+        continue;
+      let child = this.children.get(record.id);
+      if (!child) {
+        const backend = record.sandboxBackend ? this.d.sandboxes.find((b) => b.name === record.sandboxBackend) : undefined;
+        if (record.sandbox && !backend) {
+          this.d.logger.error("threads.recover", new Error(`Cannot recover sandbox backend for ${record.id}`));
+          continue;
+        }
+        child = { record, backend, targetRoot: record.targetRoot, callId: record.callId, recovered: true };
+        this.children.set(record.id, child);
+        this.concurrency.restore();
+      } else if (!child.record.sessionFile && record.sessionFile && !child.launchPending) {
+        child.record.sessionFile = record.sessionFile;
+      }
+      if (!child.watcher && child.record.sessionFile && !child.closing) this.watchChild(child);
+    }
+  }
+
+  private watchChild(child: Child): void {
+    if (!child.record.sessionFile) return;
+    try {
+      child.watcher = new InboxWatcher({
+        file: inboxPath(child.record.sessionFile),
+        logger: this.d.logger,
+        pollMs: this.d.pollMs,
+        onLine: (line) => this.onInbox(child, line),
+      });
+      child.watcher.start();
+    } catch (err) {
+      this.d.logger.error("threads.watch", err);
+    }
   }
 
   get transportSetting(): InfinityConfig["threads"]["transport"] {
@@ -216,6 +297,10 @@ export class ThreadService {
       createdAt: this.now(),
       status: "running",
       sandbox,
+      parentSession: this.d.parentSession,
+      targetRoot,
+      sandboxBackend: backend?.name,
+      callId: io.callId,
       ...(transport === "subagents" ? { transport } : {}),
     };
     let detached: DetachedLaunch | undefined;
@@ -244,12 +329,10 @@ export class ThreadService {
         const result = await io.launch({ agent: fresh ? AGENT_FRESH : AGENT_FORK, task, name: id, cwd: sandbox?.path, model: p.model });
         markLaunched();
         if (result.sessionFile) record.sessionFile = result.sessionFile;
-        if (!this.disposed) {
-          try {
-            this.d.files.write(record);
-          } catch (err) {
-            this.d.logger.error("threads.spawn", err);
-          }
+        try {
+          this.d.files.write(record);
+        } catch (err) {
+          this.d.logger.error("threads.spawn", err);
         }
       }
     } catch (err) {
@@ -271,7 +354,7 @@ export class ThreadService {
         detached.abort();
       }
       this.children.delete(id);
-      this.d.files.remove(id);
+      if (detached) this.d.files.remove(id);
       throw new Error("Cannot spawn a thread after the session has ended.");
     }
 
@@ -290,17 +373,7 @@ export class ThreadService {
           this.onClosed(child, { type: "closed", seq: 0, text: String(err), at: this.now() }, this.sourceOf(child), "error"),
       );
     } else if (record.sessionFile) {
-      try {
-        child.watcher = new InboxWatcher({
-          file: inboxPath(record.sessionFile),
-          logger: this.d.logger,
-          pollMs: this.d.pollMs,
-          onLine: (line) => this.onInbox(child, line),
-        });
-        child.watcher.start();
-      } catch (err) {
-        this.d.logger.error("threads.spawn", err);
-      }
+      this.watchChild(child);
     } else {
       this.d.logger.error("threads.spawn", new Error(`no session file returned for ${id}, reports from it cannot be received`));
     }
@@ -331,6 +404,7 @@ export class ThreadService {
     const rec = child.record;
     const source = this.sourceOf(child);
     if (line.type === "report") {
+      if (child.recovered && line.seq <= (this.d.reportedPrefixes?.get(rec.id) ?? -1)) return;
       this.d.emitter.emit({
         sourceId: rec.id,
         kind: "child_report",
@@ -379,38 +453,58 @@ export class ThreadService {
     outcome: "ok" | "error" = "ok",
   ): Promise<void> {
     const rec = child.record;
-    if (rec.status === "closed" || child.closing) return;
-    child.closing = true;
-    child.watcher?.stop();
-    const text = renderReport(line.text?.trim() || "(no report)");
-    const parts = [
-      rec.transport === "subagents"
-        ? `Child thread ${rec.id} has finished${outcome === "error" ? " with an error" : ""}. Final report: ${text}`
-        : `Child thread ${rec.id} has shut down. Report from child thread: ${text}`,
-    ];
-    if (rec.sandbox && child.backend) {
-      try {
-        if (this.d.config.sandbox.autoCommit) await child.backend.commitAll(rec.sandbox, `thread ${rec.id}`);
-        const stat = await child.backend.diffStat(rec.sandbox);
-        parts.push(
-          `Sandbox branch ${rec.sandbox.branch} changes against its base:\n${stat}`,
-          `Merge them with squash_sandbox({ thread_id: "${rec.id}" }).`,
-        );
-      } catch (err) {
-        this.d.logger.error("threads.close", err);
-        outcome = "error";
-        parts.push(`Could not read the sandbox state (${(err as Error).message}). Branch ${rec.sandbox.branch} is intact.`);
-      }
+    if (this.disposed || rec.status === "closed" || child.closing) return;
+    const prior = finalizers.get(rec.id);
+    if (prior) {
+      await prior;
+      if (!this.disposed) await this.onClosed(child, line, source, outcome);
+      return;
     }
+    let release!: () => void;
+    const lock = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    finalizers.set(rec.id, lock);
     try {
-      this.d.files.remove(rec.id);
-    } catch (err) {
-      this.d.logger.error("threads.close", err);
+      child.closing = true;
+      child.watcher?.stop();
+      const text = renderReport(line.text?.trim() || "(no report)");
+      const parts = [
+        rec.transport === "subagents"
+          ? `Child thread ${rec.id} has finished${outcome === "error" ? " with an error" : ""}. Final report: ${text}`
+          : `Child thread ${rec.id} has shut down. Report from child thread: ${text}`,
+      ];
+      if (rec.sandbox && child.backend) {
+        try {
+          if (this.d.config.sandbox.autoCommit) await child.backend.commitAll(rec.sandbox, `thread ${rec.id}`);
+          const stat = await child.backend.diffStat(rec.sandbox);
+          parts.push(
+            `Sandbox branch ${rec.sandbox.branch} changes against its base:\n${stat}`,
+            `Merge them with squash_sandbox({ thread_id: "${rec.id}" }).`,
+          );
+        } catch (err) {
+          this.d.logger.error("threads.close", err);
+          outcome = "error";
+          parts.push(`Could not read the sandbox state (${(err as Error).message}). Branch ${rec.sandbox.branch} is intact.`);
+        }
+      }
+      if (this.disposed) return;
+      const event = { sourceId: rec.id, kind: "child_closed" as const, seq: 0, source, body: parts.join("\n") };
+      this.d.emitter.emit(event);
+      if (this.d.emitter.hasPendingOrSeen(event)) {
+        try {
+          this.d.files.remove(rec.id);
+        } catch (err) {
+          this.d.logger.error("threads.close", err);
+        }
+      }
+      child.outcome = outcome;
+      rec.status = "closed";
+      this.concurrency.complete(outcome);
+    } finally {
+      finalizers.delete(rec.id);
+      release();
     }
-    child.outcome = outcome;
-    rec.status = "closed";
-    this.concurrency.complete(outcome);
-    if (!this.disposed) this.d.emitter.emit({ sourceId: rec.id, kind: "child_closed", seq: 0, source, body: parts.join("\n") });
   }
 
   /** R-H5, child side. */
@@ -535,6 +629,7 @@ export class ThreadService {
 
   dispose(): void {
     this.disposed = true;
+    if (this.discovery) clearInterval(this.discovery);
     for (const c of this.children.values()) {
       c.watcher?.stop();
       if (c.record.status === "running") {
@@ -543,10 +638,12 @@ export class ThreadService {
           c.record.status = "closed";
           c.abort();
         }
-        try {
-          this.d.files.remove(c.record.id);
-        } catch (err) {
-          this.d.logger.error("threads.dispose", err);
+        if (c.abort) {
+          try {
+            this.d.files.remove(c.record.id);
+          } catch (err) {
+            this.d.logger.error("threads.dispose", err);
+          }
         }
       }
     }

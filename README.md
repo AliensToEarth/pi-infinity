@@ -246,6 +246,9 @@ limits. Invalid values are reported and ignored; check `/infinity config` to con
 ## Limits
 
 * Running job shells are cancelled when the session ends and are not resumed; timers are resumed.
+* Interactive threads are recovered only when the same persistent parent session is resumed.
+  If the transport loses an exit notification, a child without a close report may remain listed
+  as running; a quiet inbox does not prove that it exited.
 * On pi-interactive-subagents a closing child wakes the parent twice, once for the close event
   and once for the extension's own exit message, which pi-infinity shortens to one line but
   cannot suppress.

@@ -50,6 +50,21 @@ export function timerEntriesFromBranch(branch: ReadonlyArray<{ type: string; cus
   return out;
 }
 
+/** Contiguous report sequences already journaled on this branch; gaps remain replayable. */
+export function reportedPrefixesFromBranch(
+  branch: ReadonlyArray<{ type: string; customType?: string; data?: unknown }>,
+): Map<string, number> {
+  const prefixes = new Map<string, number>();
+  for (const entry of branch) {
+    if (entry.type !== "custom" || entry.customType !== "infinity-event-pending" || !isEventInput(entry.data)) continue;
+    const event = entry.data;
+    if (event.kind !== "child_report" || !Number.isSafeInteger(event.seq) || event.seq < 0) continue;
+    const previous = prefixes.get(event.sourceId) ?? -1;
+    if (event.seq === previous + 1) prefixes.set(event.sourceId, event.seq);
+  }
+  return prefixes;
+}
+
 function timerEvent(timer: Extract<TimerEntry, { op: "set" }>["timer"], at: number): EventInput {
   const lateMs = Math.max(0, at - timer.dueAt);
   const late = lateMs > 1000 ? ` (late by ${Math.round(lateMs / 1000)}s, the session was not running)` : "";
@@ -144,6 +159,8 @@ export function createRuntime(pi: ExtensionAPI, ctx: ExtensionContext): Runtime 
     const files = new ThreadFiles(agentDir());
     threads = new ThreadService({
       identity: identify(process.env, files),
+      parentSession: ctx.sessionManager.getSessionFile() ?? undefined,
+      reportedPrefixes: reportedPrefixesFromBranch(branch as never),
       files,
       sandboxes: [new JjSandbox(logger), new GitSandbox(logger)],
       emitter,

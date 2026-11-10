@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, appendFileSync, chmodSync, mkdtempSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -14,6 +14,8 @@ import { ThreadService, type ThreadIO } from "../extensions/lib/thread-service.t
 import {
   AGENT_FORK,
   AGENT_FRESH,
+  INBOX_CHUNK_BYTES,
+  INBOX_MAX_RECORD_CHARS,
   InboxWatcher,
   ThreadFiles,
   appendInbox,
@@ -21,6 +23,7 @@ import {
   frameTask,
   identify,
   inboxPath,
+  nextSeq,
   type InboxLine,
 } from "../extensions/lib/threads.ts";
 
@@ -160,6 +163,174 @@ test("R-H5 bad inbox lines are logged, not thrown", () => {
   const logger = memoryLogger();
   new InboxWatcher({ file, onLine: () => assert.fail("no line expected"), logger }).drain();
   assert.equal(logger.lines.length, 1);
+});
+
+test("R-H5 inbox reads are bounded and reassemble records across chunk boundaries", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  const got: InboxLine[] = [];
+  const w = new InboxWatcher({ file, onLine: (l) => got.push(l), logger: memoryLogger(), chunkBytes: 7 });
+  const records = Array.from({ length: 6 }, (_, i) => ({ type: "report" as const, seq: i, text: `record ${i} 🌍`, at: i + 1 }));
+  writeFileSync(file, `${records.map((r) => JSON.stringify(r)).join("\n")}\n`);
+  w.drain();
+  assert.deepEqual(
+    got.map((l) => l.seq),
+    [0, 1, 2, 3, 4, 5],
+    "one pass reads every chunk",
+  );
+  assert.equal(got[5].text, "record 5 🌍", "a UTF-8 character split across chunks survives");
+  appendInbox(file, { type: "closed", seq: 6, at: 7 });
+  w.drain();
+  assert.deepEqual(
+    got.map((l) => l.seq),
+    [0, 1, 2, 3, 4, 5, 6],
+  );
+});
+
+test("R-H5 a multi-chunk inbox drains completely in one pass", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  const got: InboxLine[] = [];
+  const pad = "x".repeat(1000);
+  const records = Array.from({ length: 200 }, (_, i) => ({ type: "report" as const, seq: i, text: `${i}:${pad}`, at: i }));
+  writeFileSync(file, `${records.map((r) => JSON.stringify(r)).join("\n")}\n`);
+  assert.ok(statSync(file).size > INBOX_CHUNK_BYTES * 3, "the inbox spans several chunks");
+  new InboxWatcher({ file, onLine: (l) => got.push(l), logger: memoryLogger() }).drain();
+  assert.equal(got.length, 200);
+  assert.deepEqual([got[0].seq, got[199].seq], [0, 199]);
+});
+
+test("R-H5 a record above the size cap is dropped without blocking later records", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  const got: InboxLine[] = [];
+  const logger = memoryLogger();
+  const w = new InboxWatcher({ file, onLine: (l) => got.push(l), logger, chunkBytes: 16, maxRecordChars: 64 });
+  const oversized = JSON.stringify({ type: "report", seq: 0, text: "y".repeat(400), at: 1 });
+  for (let i = 0; i < oversized.length; i += 16) {
+    writeFileSync(file, oversized.slice(i, i + 16), { flag: "a" });
+    w.drain();
+  }
+  assert.equal(got.length, 0, "the oversized record is never delivered");
+  assert.equal(logger.lines.length, 1, "one log entry, not one per read");
+  writeFileSync(file, "\n", { flag: "a" });
+  w.drain();
+  appendInbox(file, { type: "report", seq: 1, text: "after", at: 2 });
+  w.drain();
+  assert.deepEqual(
+    got.map((l) => l.text),
+    ["after"],
+  );
+  assert.equal(logger.lines.length, 1, "the rest of the dropped record is skipped silently");
+});
+
+test("R-H5 a record exactly at the size cap is delivered, one character more is dropped", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  const got: InboxLine[] = [];
+  const logger = memoryLogger();
+  const cap = 120;
+  const w = new InboxWatcher({ file, onLine: (l) => got.push(l), logger, chunkBytes: 32, maxRecordChars: cap });
+  const empty = (seq: number) => JSON.stringify({ type: "report", seq, text: "", at: 1 }).length;
+  const exact = JSON.stringify({ type: "report", seq: 0, text: "z".repeat(cap - empty(0)), at: 1 });
+  assert.equal(exact.length, cap);
+  writeFileSync(file, `${exact}\n`);
+  w.drain();
+  assert.deepEqual(
+    got.map((l) => l.seq),
+    [0],
+  );
+  const over = JSON.stringify({ type: "report", seq: 1, text: "z".repeat(cap + 1 - empty(1)), at: 1 });
+  assert.equal(over.length, cap + 1);
+  appendFileSync(file, `${over}\n`);
+  w.drain();
+  assert.deepEqual(
+    got.map((l) => l.seq),
+    [0],
+    "the oversized record is dropped",
+  );
+  assert.equal(logger.lines.length, 1);
+});
+
+test("R-H5 a stop during a pass ends that pass and the next drain resumes", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  const got: InboxLine[] = [];
+  const w: InboxWatcher = new InboxWatcher({
+    file,
+    logger: memoryLogger(),
+    chunkBytes: 16,
+    onLine: (l) => {
+      got.push(l);
+      if (got.length === 1) w.stop();
+    },
+  });
+  appendInbox(file, { type: "report", seq: 0, text: "a", at: 1 });
+  appendInbox(file, { type: "report", seq: 1, text: "b", at: 2 });
+  w.drain();
+  assert.deepEqual(
+    got.map((l) => l.seq),
+    [0],
+    "no line is delivered after stop",
+  );
+  w.drain();
+  assert.deepEqual(
+    got.map((l) => l.seq),
+    [0, 1],
+    "the unread remainder is delivered by the next pass",
+  );
+});
+
+test(
+  "R-H5 nextSeq counts appended bytes instead of rescanning the inbox",
+  { skip: process.getuid?.() === 0 ? "root ignores file permissions" : false },
+  () => {
+    const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+    assert.equal(nextSeq(file), 0, "a missing inbox has no records");
+    appendInbox(file, { type: "report", seq: 0, text: "a", at: 1 });
+    appendInbox(file, { type: "report", seq: 1, text: "b", at: 2 });
+    assert.equal(nextSeq(file), 2);
+    appendInbox(file, { type: "report", seq: 2, text: "c", at: 3 });
+    assert.equal(nextSeq(file), 3, "only the appended record is read");
+    chmodSync(file, 0o000);
+    try {
+      assert.equal(nextSeq(file), 3, "an unchanged inbox is not opened again");
+    } finally {
+      chmodSync(file, 0o600);
+    }
+  },
+);
+
+test("R-H5 replaced or truncated inboxes are read from their beginning", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  const got: number[] = [];
+  const watcher = new InboxWatcher({ file, onLine: (line) => got.push(line.seq), logger: memoryLogger() });
+  appendInbox(file, { type: "report", seq: 0, text: "a".repeat(100), at: 1 });
+  watcher.drain();
+  writeFileSync(file, "");
+  watcher.drain();
+  appendInbox(file, { type: "report", seq: 1, at: 1 });
+  watcher.drain();
+  assert.deepEqual(got, [0, 1]);
+});
+
+test("R-H5 oversized child reports are rejected without writing", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  assert.throws(() => appendInbox(file, { type: "closed", seq: 0, text: "x".repeat(INBOX_MAX_RECORD_CHARS), at: 1 }), /exceeds/);
+  assert.equal(existsSync(file), false);
+  appendInbox(file, { type: "closed", seq: 0, text: "ok", at: 1 });
+  assert.equal(nextSeq(file), 1);
+});
+
+test("R-H5 nextSeq counts nonblank partial lines and restarts after a shrink", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  writeFileSync(file, "\n\n");
+  assert.equal(nextSeq(file), 0, "blank lines are not records");
+  appendInbox(file, { type: "report", seq: 0, text: "a", at: 1 });
+  assert.equal(nextSeq(file), 1);
+  writeFileSync(file, '{"type":"report","seq":0,"at":1}\n');
+  assert.equal(nextSeq(file), 1, "a smaller inbox is counted again from zero");
+  writeFileSync(file, "");
+  assert.equal(nextSeq(file), 0);
+  writeFileSync(file, '{"type":"report","seq":0,"at":1}');
+  assert.equal(nextSeq(file), 1, "an unterminated nonblank record is counted once");
+  appendFileSync(file, "\n");
+  assert.equal(nextSeq(file), 1);
 });
 
 interface Harness {

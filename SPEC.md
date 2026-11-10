@@ -460,6 +460,18 @@ R-H5. `report_to_parent` appends one JSON line `{type:"report", seq, text, at}`.
       event once (dedup by `<thread>:report:<seq>`), preserving UTF-8 characters split
       across reads. A disappeared inbox is ignored; other read errors are logged. Invalid
       JSON or malformed inbox records are logged and ignored without stopping subsequent records.
+      Reads are bounded: one drain reads at most `INBOX_CHUNK_BYTES` (64 KiB) per read and
+      repeats until it reaches the size seen when the pass started, so watcher memory does not
+      grow with the inbox and a record split across chunk boundaries is still delivered once.
+      A record longer than `INBOX_MAX_RECORD_CHARS` (1 MiB) is dropped with one log entry, the
+      rest of that record is skipped up to its newline, and later records still arrive. The child
+      rejects its own oversized reports before writing, so a rejected close does not terminate. A
+      `stop()` during a pass ends that pass, so no line is delivered after the watcher stops.
+      Both limits are exported by `extensions/lib/threads.ts` and may be lowered per watcher.
+      Sequence numbers come from a per-file counter that counts only the bytes appended since
+      the previous call without storing a partial line, so reports do not repeatedly rescan the
+      inbox; the counter restarts when the file is replaced, shrinks below the counted offset or
+      disappears. Nonblank partial lines count as before.
 R-H6. `close_thread` appends `{type:"closed", report?}` and returns `terminate: true`. The
       parent emits `child_closed` with the report. The thread session then exits through
       the subagent auto-exit path.
@@ -482,10 +494,16 @@ R-H7. `send_message_to_child` accepts only running direct children recorded in t
 R-H7a. Interactive transport failures returned in the nested tool's `details.error` are failures
        even when `executeTool` reports `isError: false`; propagate them to the caller. A failed
        launch must not leave a running thread record or sandbox.
-R-H8. Thread files and watchers are removed when the child closes or the parent session shuts
-      down (best effort, logged). A launch that resolves after shutdown is not registered and must
-      not recreate its thread file or watcher; its spawn call fails. A detached launch that starts
-      during shutdown is aborted. Any sandbox created before shutdown is left intact.
+R-H8. Interactive child records retain their owning parent session identity and survive parent
+      shutdown. When that same session resumes, it restores only its own direct interactive
+      children, reattaches available inboxes, and counts them against concurrency admission.
+      Contiguous report prefixes journaled on the active branch are not replayed even if they
+      exceed the bounded event cache; later gaps use ordinary bounded event deduplication. Watchers
+      stop at shutdown; detached launches are aborted and cannot be reattached. A launch that completes
+      after shutdown preserves its interactive record and session file but its original call fails.
+      Any sandbox created before shutdown is left intact. Recovery assumes one active owner of a
+      session; it cannot detect a child that exits without a close report if its transport does not
+      deliver an exit notification after restart.
 R-H9. Thread agents may spawn further threads (`subagent_agents` lists all thread agents and
       aliases). When the requested mode would use the caller's own agent name, launch the
       equivalent alias to satisfy the interactive transport's self-spawn restriction. Both

@@ -22,6 +22,11 @@ export class AdaptiveConcurrency {
     this.active++;
   }
 
+  /** Restore an existing reservation even when it exceeds the current admission limit. */
+  restore(): void {
+    if (this.settings.enabled) this.active++;
+  }
+
   complete(outcome: "ok" | "error"): void {
     if (!this.settings.enabled) return;
     if (this.active <= 0) throw new Error("bug: thread concurrency reservation missing");

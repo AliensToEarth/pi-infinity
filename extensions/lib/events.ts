@@ -141,6 +141,12 @@ export class Emitter {
     this.opts = opts;
   }
 
+  /** True if an event is already delivered or was accepted into the pending outbox. */
+  hasPendingOrSeen(input: EventInput): boolean {
+    const id = eventIdOf(input);
+    return this.seen.has(id) || this.pending.has(id);
+  }
+
   /** Returns true when the event was delivered, false when it was a duplicate or failed. */
   emit(input: EventInput): boolean {
     const eventId = eventIdOf(input);
