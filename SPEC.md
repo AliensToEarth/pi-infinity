@@ -788,7 +788,8 @@ R-X4. Per thread, an agent named `thread-<id>` is registered just before the cal
       unregistered when the call settles. Its model is the `model` parameter, else the current
       session model. Its tools are the built-ins. Its system prompt is
       `agents/blocking/thread-blocking.md`. If the nested tool throws synchronously while
-      starting, unregister the agent before propagating the failure.
+      starting, unregister the agent before propagating the failure. Asynchronous rejections,
+      including non-Error values, and unregister failures settle as error results.
 R-X5. `fresh_context` other than `true` is rejected before any side effect, with a message
       that names the reason and says to pass `fresh_context: true` with self-contained
       instructions.

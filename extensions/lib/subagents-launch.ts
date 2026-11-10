@@ -1,10 +1,19 @@
 import { readFileSync } from "node:fs";
+import { inspect } from "node:util";
 import type { DetachedLaunch } from "./thread-service.ts";
 import type { AgentRegistry } from "./transport.ts";
 
 export const BUILTIN_TOOLS = ["read", "write", "edit", "bash", "grep", "find", "ls"];
 /** The default pi-subagents uses when an agent names no model. */
 export const FALLBACK_MODEL = "anthropic/claude-sonnet-4-6";
+
+function errorText(err: unknown): string {
+  try {
+    return err instanceof Error ? err.message : String(err);
+  } catch {
+    return inspect(err, { customInspect: false });
+  }
+}
 
 export type ExecuteTool = (
   name: string,
@@ -73,7 +82,17 @@ export function launchViaSubagents(i: LaunchInput): DetachedLaunch {
         .trim(),
       isError: outcome.isError,
     }))
-    .catch((err: unknown) => ({ output: `subagent call failed: ${(err as Error).message ?? String(err)}`, isError: true }))
-    .finally(() => i.registry.unregisterAgent(name));
+    .catch((err: unknown) => ({ output: `subagent call failed: ${errorText(err)}`, isError: true }))
+    .then((result) => {
+      try {
+        i.registry.unregisterAgent(name);
+        return result;
+      } catch (err) {
+        return {
+          output: `${result.output}\nagent cleanup failed: ${errorText(err)}`,
+          isError: true,
+        };
+      }
+    });
   return { done, abort: () => controller.abort() };
 }

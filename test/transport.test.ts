@@ -162,6 +162,48 @@ test("R-X4 an error outcome and a throwing call both settle as errors and still 
   assert.equal(b.calls.at(-1), "unregister thread-t-000004");
 });
 
+test("R-X4 non-Error rejections settle and still unregister the agent", async () => {
+  for (const reason of [null, undefined, 0, "failed"]) {
+    const { registry, registered } = registryCalls();
+    const launch = launchViaSubagents({
+      registry,
+      executeTool: () => Promise.reject(reason),
+      id: "t-000006",
+      task: "x",
+      systemPrompt: "s",
+      promptFile: "f",
+    });
+    assert.deepEqual(await launch.done, { output: `subagent call failed: ${String(reason)}`, isError: true });
+    assert.equal(registered.size, 0);
+  }
+  const { registry } = registryCalls();
+  const launch = launchViaSubagents({
+    registry,
+    executeTool: () => Promise.reject(Object.create(null)),
+    id: "t-000006",
+    task: "x",
+    systemPrompt: "s",
+    promptFile: "f",
+  });
+  assert.match((await launch.done).output, /subagent call failed:.*null prototype/);
+});
+
+test("R-X4 unregister failures become error results without losing the report", async () => {
+  const { registry } = registryCalls();
+  registry.unregisterAgent = () => {
+    throw new Error("registry unavailable");
+  };
+  const launch = launchViaSubagents({
+    registry,
+    executeTool: async () => ({ isError: false, result: { content: [{ type: "text", text: "result" }] } }),
+    id: "t-000007",
+    task: "x",
+    systemPrompt: "s",
+    promptFile: "f",
+  });
+  assert.deepEqual(await launch.done, { output: "result\nagent cleanup failed: registry unavailable", isError: true });
+});
+
 test("R-X4 a synchronous tool failure unregisters the agent before propagating", () => {
   const { calls, registered, registry } = registryCalls();
   assert.throws(
