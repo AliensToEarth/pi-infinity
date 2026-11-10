@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { test } from "node:test";
+import { test, type TestContext } from "node:test";
 import { Emitter, SPILL_MARKER, formatEventContent, spillIfLarge, type OutgoingMessage } from "../extensions/lib/events.ts";
 import { memoryLogger } from "../extensions/lib/log.ts";
+import { tempDir } from "./helpers.ts";
 
-function setup(maxChars = 400, seenCap = 3) {
-  const dir = mkdtempSync(join(tmpdir(), "pi-inf-ev-"));
+function setup(t: TestContext, maxChars = 400, seenCap = 3) {
+  const dir = tempDir(t, "pi-inf-ev-");
   const sent: OutgoingMessage[] = [];
   const logger = memoryLogger();
   const emitter = new Emitter({ send: (m) => void sent.push(m), spillDir: dir, maxChars, seenCap, logger });
@@ -16,8 +16,8 @@ function setup(maxChars = 400, seenCap = 3) {
 
 const base = { sourceId: "j1", kind: "job_exit" as const, seq: 0, source: { tool: "bg_run", callId: "c1", args: { command: "ls" } } };
 
-test("R-E1 emits once per event id", () => {
-  const { emitter, sent } = setup();
+test("R-E1 emits once per event id", (t) => {
+  const { emitter, sent } = setup(t);
   assert.equal(emitter.emit({ ...base, body: "done" }), true);
   assert.equal(emitter.emit({ ...base, body: "done again" }), false);
   assert.equal(sent.length, 1);
@@ -25,16 +25,16 @@ test("R-E1 emits once per event id", () => {
   assert.equal(sent[0].details.synthetic, true);
 });
 
-test("R-E1 seen set is bounded", () => {
-  const { emitter, sent } = setup(400, 2);
+test("R-E1 seen set is bounded", (t) => {
+  const { emitter, sent } = setup(t, 400, 2);
   for (let i = 0; i < 3; i++) emitter.emit({ ...base, seq: i, body: "x" });
   assert.equal(sent.length, 3);
   // seq 0 fell out of the set, so it is accepted again
   assert.equal(emitter.emit({ ...base, seq: 0, body: "x" }), true);
 });
 
-test("R-E2 large bodies are spilled with head, tail and path", () => {
-  const { emitter, sent, dir } = setup(400);
+test("R-E2 large bodies are spilled with head, tail and path", (t) => {
+  const { emitter, sent, dir } = setup(t, 400);
   const body = "A".repeat(300) + "M".repeat(2000) + "Z".repeat(300);
   emitter.emit({ ...base, body });
   const msg = sent[0];
@@ -45,9 +45,9 @@ test("R-E2 large bodies are spilled with head, tail and path", () => {
   assert.ok(msg.content.endsWith("Z".repeat(100)));
 });
 
-test("R-E2 zero tail spills without including the full body", () => {
+test("R-E2 zero tail spills without including the full body", (t) => {
   const body = "H".repeat(40) + "M".repeat(1000) + "TAIL";
-  const result = spillIfLarge(body, mkdtempSync(join(tmpdir(), "pi-inf-sp-")), { maxChars: 100, headChars: 40, tailChars: 0 }, () => {});
+  const result = spillIfLarge(body, tempDir(t, "pi-inf-sp-"), { maxChars: 100, headChars: 40, tailChars: 0 }, () => {});
   assert.ok(result.path);
   assert.equal(readFileSync(result.path, "utf8"), body);
   assert.ok(result.text.startsWith("H".repeat(40)));
@@ -56,9 +56,9 @@ test("R-E2 zero tail spills without including the full body", () => {
   assert.ok(result.text.length < body.length);
 });
 
-test("R-E2 an embedded spill marker cannot bypass the size limit", () => {
+test("R-E2 an embedded spill marker cannot bypass the size limit", (t) => {
   const body = SPILL_MARKER + "x".repeat(500);
-  const result = spillIfLarge(body, mkdtempSync(join(tmpdir(), "pi-inf-sp-")), { maxChars: 100, headChars: 40, tailChars: 20 }, () => {});
+  const result = spillIfLarge(body, tempDir(t, "pi-inf-sp-"), { maxChars: 100, headChars: 40, tailChars: 20 }, () => {});
   assert.ok(result.path);
   assert.equal(readFileSync(result.path, "utf8"), body);
 });
@@ -74,7 +74,7 @@ test("R-E2 spill write failure still truncates and reports", () => {
 });
 
 test("R-E3 delivery is steer with triggerTurn", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-inf-ev-"));
+  const dir = tmpdir();
   const calls: unknown[] = [];
   const e = new Emitter({ send: (_m, o) => void calls.push(o), spillDir: dir, maxChars: 100, seenCap: 5, logger: memoryLogger() });
   e.emit({ ...base, body: "hi" });
@@ -82,7 +82,7 @@ test("R-E3 delivery is steer with triggerTurn", () => {
 });
 
 test("R-E5 emitter never throws when send fails", () => {
-  const dir = mkdtempSync(join(tmpdir(), "pi-inf-ev-"));
+  const dir = tmpdir();
   const logger = memoryLogger();
   const notes: string[] = [];
   const e = new Emitter({
