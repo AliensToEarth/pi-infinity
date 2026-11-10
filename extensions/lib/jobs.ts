@@ -372,7 +372,6 @@ export class JobManager {
 
   private onLine(st: Internal, line: string): void {
     st.job.lines++;
-    if (st.patterns.length === 0) return;
     if (!st.patterns.some((p) => p.test(line))) return;
     st.job.matches++;
     const clipped = line.length > MAX_MATCH_LINE_CHARS ? `${line.slice(0, MAX_MATCH_LINE_CHARS)}...` : line;

@@ -37,7 +37,8 @@ interface Pending {
 export class TimerStore {
   private readonly deps: TimerDeps;
   private readonly pending = new Map<string, Pending>();
-  // Ids this store already fired or cancelled, so a replayed entry branch never runs them twice.
+  // Finished ids prevent replay from running a timer twice; all used ids also
+  // prevent a newly scheduled timer from colliding with an earlier one.
   private readonly done = new Set<string>();
   private readonly used = new Set<string>();
 
@@ -77,6 +78,8 @@ export class TimerStore {
     if (id === undefined) throw new Error("unable to generate a unique timer id");
     const timer: TimerRecord = { id, kind, setAt: this.deps.now(), dueAt };
     if (note !== undefined) timer.note = note;
+    // Persist before making the timer visible or arming it, so a failed write leaves
+    // no timer that could fire without a corresponding set entry.
     this.deps.persist({ op: "set", timer });
     this.used.add(timer.id);
     this.pending.set(timer.id, { timer });
@@ -99,6 +102,8 @@ export class TimerStore {
 
   private fireNow(timer: TimerRecord): boolean {
     const at = this.deps.now();
+    // Record the firing before delivery; on a write failure keep the timer pending
+    // and retry rather than delivering an event that replay could deliver again.
     try {
       this.deps.persist({ op: "fired", id: timer.id, at });
     } catch (err) {

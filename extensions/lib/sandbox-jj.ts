@@ -46,27 +46,20 @@ function toToolRun(err: unknown, tool: string): ToolRun {
 
 type JjEnv = typeof process.env;
 
-// Runs jj and reports the exit code instead of throwing, for yes/no probes.
-async function jjRun(cwd: string, args: string[], env: JjEnv): Promise<ToolRun> {
-  // Machine-readable output regardless of the user's pager and color config.
-  const full = ["--no-pager", "--color=never", ...args];
+// Report exit codes instead of throwing for probes and colocated worktree cleanup.
+async function run(tool: "jj" | "git", cwd: string, args: string[], env: JjEnv): Promise<ToolRun> {
+  // Machine-readable jj output regardless of the user's pager and color config.
+  const full = tool === "jj" ? ["--no-pager", "--color=never", ...args] : args;
   try {
-    const r = await execFileAsync("jj", full, { cwd, env, encoding: "utf8", maxBuffer: MAX_BUFFER });
+    const r = await execFileAsync(tool, full, { cwd, env, encoding: "utf8", maxBuffer: MAX_BUFFER });
     return { code: 0, stdout: r.stdout, stderr: r.stderr };
   } catch (err) {
-    return toToolRun(err, "jj");
+    return toToolRun(err, tool);
   }
 }
 
-// Runs git (only for colocated worktree cleanup) with the same exit-code shape.
-async function gitRun(cwd: string, args: string[], env: JjEnv): Promise<ToolRun> {
-  try {
-    const r = await execFileAsync("git", args, { cwd, env, encoding: "utf8", maxBuffer: MAX_BUFFER });
-    return { code: 0, stdout: r.stdout, stderr: r.stderr };
-  } catch (err) {
-    return toToolRun(err, "git");
-  }
-}
+const jjRun = (cwd: string, args: string[], env: JjEnv): Promise<ToolRun> => run("jj", cwd, args, env);
+const gitRun = (cwd: string, args: string[], env: JjEnv): Promise<ToolRun> => run("git", cwd, args, env);
 
 // Runs jj and throws an Error whose message carries the command's stderr.
 async function jj(cwd: string, args: string[], env: JjEnv): Promise<string> {

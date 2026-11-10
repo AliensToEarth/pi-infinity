@@ -75,7 +75,7 @@ export function assessCoverage(input: unknown): CoverageAssessment {
   }
   for (const list of reads.values()) list.sort((a, b) => a.start - b.start || a.end - b.end);
   const missing: Range[] = [];
-  function add(source: string, start: number, end: number): void {
+  function addMissing(source: string, start: number, end: number): void {
     if (missing.length === MAX_MISSING) throw new Error(`More than ${MAX_MISSING} missing ranges`);
     missing.push({ source, start, end });
   }
@@ -85,14 +85,14 @@ export function assessCoverage(input: unknown): CoverageAssessment {
     for (const read of reads.get(range.source) ?? []) {
       if (read.end < cursor) continue;
       if (read.start > range.end) break;
-      if (read.start > cursor) add(range.source, cursor, read.start - 1);
+      if (read.start > cursor) addMissing(range.source, cursor, read.start - 1);
       if (read.end >= range.end) {
         complete = true;
         break;
       }
       cursor = Math.max(cursor, read.end + 1);
     }
-    if (!complete) add(range.source, cursor, range.end);
+    if (!complete) addMissing(range.source, cursor, range.end);
   }
   return { missing, failures: coverage.filter((item) => item.status !== "read"), evidence, unknownSources };
 }
