@@ -38,3 +38,20 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
       - run: ./scripts/publish.sh
+  publish-github:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          scope: "@alienstoearth"
+      - run: bash ./scripts/publish-github.sh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -297,8 +297,10 @@ R-H16. `scripts/install.sh` configures the package and an interactive thread tra
       node, git and tmux before changing configuration, installs missing bundled agent links, and
       reports installation failures. System prerequisites are not installed automatically.
 R-H17. After CI passes on a push to `main`, publish the current package version using npm
-      trusted publishing if it is not already published. Skip existing versions and fail on
-      registry errors; never publish pull requests.
+      trusted publishing and separately publish an `@alienstoearth/pi-infinity` copy to GitHub
+      Packages using the workflow token. Skip existing versions and fail on registry or publish
+      errors; never publish pull requests. The scoped copy retains the npm package contents and
+      version without changing the source package name.
 
 ## 5. Modules
 
