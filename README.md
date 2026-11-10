@@ -96,7 +96,8 @@ shell may survive.
 Use `timeout_seconds` to stop a long-running job. The default limit is eight concurrent jobs.
 `watch` accepts regex patterns and batches matching lines into events, limited by default to
 six per minute per job; suppressed matches are counted in the exit event. Set
-`associative: true` to disable that rate limit.
+`associative: true` to disable that rate limit. Matching uses synchronous JavaScript regexes;
+pathological patterns can block pi, so use simple, trusted patterns.
 
 ## Guards
 

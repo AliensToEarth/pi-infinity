@@ -199,6 +199,20 @@ export interface InboxLine {
   at: number;
 }
 
+function isInboxLine(value: unknown): value is InboxLine {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const line = value as Record<string, unknown>;
+  return (
+    (line.type === "report" || line.type === "closed") &&
+    typeof line.seq === "number" &&
+    Number.isSafeInteger(line.seq) &&
+    line.seq >= 0 &&
+    typeof line.at === "number" &&
+    Number.isFinite(line.at) &&
+    (line.text === undefined || typeof line.text === "string")
+  );
+}
+
 export function appendInbox(file: string, line: InboxLine): void {
   mkdirSync(dirname(file), { recursive: true });
   appendFileSync(file, `${JSON.stringify(line)}\n`);
@@ -285,11 +299,15 @@ export class InboxWatcher {
     this.carry = parts.pop() ?? "";
     for (const part of parts) {
       if (part.trim() === "") continue;
-      let parsed: InboxLine;
+      let parsed: unknown;
       try {
-        parsed = JSON.parse(part) as InboxLine;
+        parsed = JSON.parse(part) as unknown;
       } catch (err) {
         this.o.logger.error("threads.inbox", new Error(`bad inbox line ${JSON.stringify(part.slice(0, 80))}: ${(err as Error).message}`));
+        continue;
+      }
+      if (!isInboxLine(parsed)) {
+        this.o.logger.error("threads.inbox", new Error(`bad inbox line ${JSON.stringify(part.slice(0, 80))}: malformed record`));
         continue;
       }
       this.o.onLine(parsed);

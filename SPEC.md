@@ -328,11 +328,13 @@ R-J4. Exit always emits one `job_exit` event with status (`exited`, `signaled`, 
       and the log path. Tail is subject to R-E2. The job timeout stops when the shell exits,
       even if inherited output pipes remain open while the manager waits to finalize. Once the
       close grace expires, the manager closes its pipe handles so descendants cannot keep the
-      pi process alive.
+      pi process alive. Timeouts longer than the native timer limit are armed in bounded hops
+      rather than overflowing into an immediate timeout.
 R-J5. `watch` patterns are compiled at start. An invalid pattern or one longer than 200
       characters fails the call with a clear error and starts nothing. To bound memory,
       watch patterns inspect at most the first 65536 UTF-16 code units of each line;
-      longer lines are still counted once and retained in the log subject to its cap.
+      longer lines are still counted once and retained in the log subject to its cap. JS regex
+      matching is synchronous and may block on pathological patterns; watch is not a security boundary.
 R-J6. Matching lines are batched. A batch is flushed after `watchDebounceMs` of quiet or at
       `watchBatchLines` lines. At most `watchEventsPerMin` match events are emitted per job
       per minute. Further matches are counted, not delivered, and reported in the exit
@@ -454,7 +456,8 @@ R-H4. Before launch the parent writes the thread file. After launch it records t
 R-H5. `report_to_parent` appends one JSON line `{type:"report", seq, text, at}`. The parent
       watcher (fs.watch with a 1 s poll fallback) turns each line into a `child_report`
       event once (dedup by `<thread>:report:<seq>`), preserving UTF-8 characters split
-      across reads. A disappeared inbox is ignored; other read errors are logged.
+      across reads. A disappeared inbox is ignored; other read errors are logged. Invalid
+      JSON or malformed inbox records are logged and ignored without stopping subsequent records.
 R-H6. `close_thread` appends `{type:"closed", report?}` and returns `terminate: true`. The
       parent emits `child_closed` with the report. The thread session then exits through
       the subagent auto-exit path.
@@ -526,8 +529,10 @@ R-S5. `squash_sandbox` rejects running children and children still finalizing th
       refuses. Both backends refuse a target with uncommitted file changes, rather than
       mixing unrelated work into the squash or its commit. Git squash refuses to overwrite
       ignored files in the target. With auto-commit disabled, git refuses to squash a dirty
-      sandbox instead of deleting its uncommitted changes. Git worktree removal refuses to
-      discard ignored files; they require explicit manual cleanup.
+      sandbox instead of deleting its uncommitted changes. Root-session squash refuses a target
+      other than the worktree or workspace where the sandbox was created. Git worktree removal refuses to discard
+      ignored files; they require explicit manual cleanup. A jj squash marker alone does not
+      prove that its content remains in a particular target.
 R-S6. A failed squash preserves the child branch and must not reset unrelated work created
       concurrently. If safe automatic rollback is not possible, leave the target state intact
       and report that manual recovery may be required, together with conflicting paths.
@@ -545,7 +550,9 @@ R-S7. After a successful squash the worktree is removed and the branch is kept. 
       may move between inspection and deletion. Users may delete bookmarks manually.
       Before recursively deleting a jj workspace directory, including one under an absolute
       sandbox root outside the repository, removal verifies its registered name and path and
-      its repository pointer; if verification fails, it leaves both the directory and the
+      its repository pointer; it must not discard unsnapshotted or ignored files. When
+      retaining its bookmark, it also refuses if that bookmark no longer points at the
+      workspace's current change. If verification fails, it leaves both the directory and the
       registered workspace intact. Failed creation cleanup applies the same checks and never
       deletes an unverified directory, including one created concurrently by another process.
       A failed git worktree add does not establish ownership of its destination or branch;

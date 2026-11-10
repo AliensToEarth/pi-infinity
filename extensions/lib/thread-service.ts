@@ -70,6 +70,8 @@ export interface ThreadServiceDeps {
 interface Child {
   record: ThreadRecord;
   backend?: SandboxBackend;
+  /** Worktree/workspace in which this child was created. */
+  targetRoot?: string;
   watcher?: InboxWatcher;
   callId?: string;
   abort?: () => void;
@@ -189,12 +191,14 @@ export class ThreadService {
 
     let sandbox: ThreadRecord["sandbox"];
     let backend: SandboxBackend | undefined;
+    let targetRoot: string | undefined;
     if (p.sandbox) {
       const where = this.d.identity.record?.sandbox?.path ?? io.cwd;
       const picked = await this.pickBackend(where);
       if (this.disposed) throw new Error("Cannot spawn a thread after the session has ended.");
       if (!picked) throw new Error(`sandbox: true needs a git or jj repository, but ${where} is not inside one`);
       backend = picked.backend;
+      targetRoot = picked.repoRoot;
       const parentBranch = this.d.identity.record?.sandbox?.branch;
       sandbox = await backend.create({ cwd: where, id, base: parentBranch, root: this.d.config.sandbox.root });
     }
@@ -215,7 +219,7 @@ export class ThreadService {
       ...(transport === "subagents" ? { transport } : {}),
     };
     let detached: DetachedLaunch | undefined;
-    const child: Child = { record, callId: io.callId, backend, launchPending: true };
+    const child: Child = { record, callId: io.callId, backend, targetRoot, launchPending: true };
     let launched = false;
     const markLaunched = () => {
       launched = true;
@@ -465,6 +469,11 @@ export class ThreadService {
     } else {
       const repo = await backend.detect(io.cwd);
       if (!repo) throw new Error(`${io.cwd} is not inside a ${backend.name} repository`);
+      if (repo.repoRoot !== child.targetRoot) {
+        throw new Error(
+          `Cannot squash into ${repo.repoRoot}: it is not the worktree or workspace where this sandbox was created (${child.targetRoot}).`,
+        );
+      }
       target = repo.repoRoot;
       if (!io.confirm)
         throw new Error(

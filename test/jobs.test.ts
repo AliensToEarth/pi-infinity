@@ -179,6 +179,50 @@ test("R-J10 job limit gives an actionable error", () => {
   mgr.cancel(job.id);
 });
 
+test("R-J4 long timeouts chain timers and stop on cancellation, exit, close or disposal", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+  const max = 2 ** 31 - 1;
+  const signals: string[] = [];
+  const children: EventEmitter[] = [];
+  const mgr = new JobManager({
+    emit: () => {},
+    logDir: mkdtempSync(join(tmpdir(), "pi-inf-jobs-")),
+    config: DEFAULT_CONFIG.jobs,
+    logger: memoryLogger(),
+    spawn: () => {
+      const child = Object.assign(new EventEmitter(), { pid: 12345, stdout: new PassThrough(), stderr: new PassThrough() });
+      children.push(child);
+      return child as unknown as ChildProcess;
+    },
+    killGroup: (_pid, signal) => void signals.push(signal),
+  });
+  const start = () => mgr.start({ command: "fake", cwd: tmpdir(), timeoutSeconds: (max + 1000) / 1000 });
+  const job = start();
+  const cancelled = start();
+  start();
+  start();
+  mgr.cancel(cancelled.id);
+  children[2].emit("exit", 0, null);
+  children[2].emit("close");
+  children[3].emit("close");
+  t.mock.timers.tick(max);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL"]);
+  assert.equal(job.status, "running");
+  t.mock.timers.tick(999);
+  assert.equal(signals.length, 2);
+  t.mock.timers.tick(1);
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL", "SIGTERM"]);
+  children[0].emit("exit", null, "SIGTERM");
+  children[0].emit("close");
+  assert.equal(job.status, "timeout");
+  const disposed = start();
+  mgr.dispose();
+  t.mock.timers.tick(max);
+  t.mock.timers.tick(1000);
+  assert.equal(disposed.status, "running");
+  assert.deepEqual(signals, ["SIGTERM", "SIGKILL", "SIGTERM", "SIGKILL"]);
+});
+
 test("R-J4 timeout stops a job and reports it", async () => {
   const { mgr, events } = setup();
   const job = mgr.start({ command: "sleep 30", cwd: tmpdir(), timeoutSeconds: 0.2 });

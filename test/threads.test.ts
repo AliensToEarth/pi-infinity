@@ -122,6 +122,37 @@ test("R-H5 inbox watcher preserves UTF-8 split across reads", () => {
   assert.equal(got[0]?.text, "hello 🌍");
 });
 
+test("R-H5 malformed inbox records are logged and do not block later records", () => {
+  const file = join(tmp("pi-inf-ib-"), "s.reports.jsonl");
+  const malformed = [
+    null,
+    [],
+    "report",
+    {},
+    { type: "other", seq: 0, at: 1 },
+    { type: "report", seq: "0", at: 1 },
+    { type: "report", seq: -1, at: 1 },
+    { type: "report", seq: 1.5, at: 1 },
+    { type: "closed", seq: 0 },
+    { type: "closed", seq: 0, at: "1" },
+    { type: "report", seq: 0, at: 1, text: null },
+    { type: "closed", seq: 0, at: 1, text: {} },
+  ];
+  const valid = [
+    { type: "report", seq: 1, at: 2, text: "ok" },
+    { type: "closed", seq: 2, at: 3 },
+    { type: "report", seq: 3, at: 4 },
+  ];
+  writeFileSync(file, [...malformed, ...valid].map((line) => JSON.stringify(line)).join("\n") + "\n");
+  const got: InboxLine[] = [];
+  const logger = memoryLogger();
+  const watcher = new InboxWatcher({ file, onLine: (line) => got.push(line), logger });
+  watcher.drain();
+  watcher.drain();
+  assert.deepEqual(got, valid);
+  assert.equal(logger.lines.length, malformed.length);
+});
+
 test("R-H5 bad inbox lines are logged, not thrown", () => {
   const dir = tmp("pi-inf-ib-");
   const file = join(dir, "s.reports.jsonl");
@@ -405,6 +436,29 @@ test("R-S5 root squash needs confirmation, stages and does not commit", async ()
   assert.equal(git(h.repo, "log", "--oneline").split("\n").length, 1);
   assert.ok(!existsSync(h.launches[0].cwd as string), "worktree removed");
   assert.match(git(h.repo, "branch", "--list", `sandbox-${id}`), /sandbox-t-/);
+});
+
+test("R-S5 squash rejects another repository even with a matching branch name", async () => {
+  const h = harness();
+  const other = harness();
+  const { id } = await h.svc.spawn({ instructions: "x", child_of: ["root"], sandbox: true }, h.io);
+  const path = h.launches[0].cwd as string;
+  writeFileSync(join(path, "child.txt"), "original\n");
+  await h.svc.childExited(id);
+  git(other.repo, "checkout", "-q", "-b", `sandbox-${id}`);
+  writeFileSync(join(other.repo, "other.txt"), "unrelated\n");
+  git(other.repo, "add", "other.txt");
+  git(other.repo, "commit", "-q", "-m", "unrelated");
+  git(other.repo, "checkout", "-q", "main");
+  await assert.rejects(
+    h.svc.squash(id, {}, { ...h.io, cwd: other.repo, confirm: async () => assert.fail("must not confirm") }),
+    /not the worktree or workspace/,
+  );
+  assert.ok(existsSync(join(path, "child.txt")));
+  assert.equal(git(other.repo, "status", "--porcelain"), "");
+  assert.ok(!existsSync(join(other.repo, "other.txt")));
+  h.svc.dispose();
+  other.svc.dispose();
 });
 
 test("R-S5 declined confirmation changes nothing", async () => {

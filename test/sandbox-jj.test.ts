@@ -108,6 +108,43 @@ test("jj sandbox backend", { concurrency: 8, skip: hasJj ? false : "jj is not in
     assert.equal((await xgit(repo, env, ["status", "--porcelain"])).trim(), "");
   });
 
+  t.test("R-S7 removal preserves unsnapshotted and ignored files", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const b = backend(env);
+    const sb = await b.create({ cwd: repo, id: "preserve" });
+    writeFileSync(join(sb.path, "new.txt"), "unsnapshotted");
+    await assert.rejects(b.remove(sb, { keepBranch: true }), /unsnapshotted/);
+    assert.equal(readFileSync(join(sb.path, "new.txt"), "utf8"), "unsnapshotted");
+    writeFileSync(join(sb.path, ".gitignore"), "ignored.txt\n");
+    await b.commitAll(sb, "snapshot");
+    writeFileSync(join(sb.path, "ignored.txt"), "ignored");
+    await assert.rejects(b.remove(sb, { keepBranch: true }), /ignored/);
+    assert.equal(readFileSync(join(sb.path, "ignored.txt"), "utf8"), "ignored");
+  });
+
+  t.test("R-S7 removal keeps a workspace whose bookmark moved away", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const b = backend(env);
+    const sb = await b.create({ cwd: repo, id: "moved" });
+    writeFileSync(join(sb.path, "work.txt"), "valuable");
+    await b.commitAll(sb, "work");
+    await xjj(repo, env, ["bookmark", "set", "-B", sb.branch, "-r", `${sb.branch}-`]);
+    await assert.rejects(b.remove(sb, { keepBranch: true }), /bookmark.*does not point/);
+    assert.equal(readFileSync(join(sb.path, "work.txt"), "utf8"), "valuable");
+  });
+
+  t.test("R-S5 squash marker does not suppress squash into another target", async (t) => {
+    const { repo, env } = await initRepo(t, { colocate: false });
+    const b = backend(env);
+    const source = await b.create({ cwd: repo, id: "source" });
+    const target = await b.create({ cwd: repo, id: "target" });
+    writeFileSync(join(source.path, "new.txt"), "source content");
+    assert.equal((await b.squashInto(repo, source, { commit: true })).ok, true);
+    const second = await b.squashInto(target.path, source, { commit: true });
+    assert.equal(second.ok, true);
+    assert.equal(readFileSync(join(target.path, "new.txt"), "utf8"), "source content");
+  });
+
   t.test("R-S1 validateSandboxId rejects traversal and malformed ids", async () => {
     const bad = ["", "..", ".", "../escape", "a/b", "a\\b", "a b", "-lead", "_lead", "x".repeat(42)];
     for (const id of bad) assert.throws(() => validateSandboxId(id), Error, `id ${JSON.stringify(id)}`);

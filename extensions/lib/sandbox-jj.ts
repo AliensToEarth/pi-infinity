@@ -5,7 +5,7 @@
 // call goes through execFile with an argument array, never a shell string.
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { Logger } from "./log.ts";
@@ -223,18 +223,11 @@ export class JjSandbox implements SandboxBackend {
         error: `refusing to squash into ${targetPath}: it has uncommitted changes, sandbox work must never be mixed with user work`,
       };
     }
-    // One command does two jobs: -R selects the sandbox as the current
-    // workspace, so jj snapshots it (capturing work that was never described),
-    // and the summary counts the squashed content. Count before the squash:
-    // --keep-emptied leaves the source commit but empties it, so the same
-    // diff would read zero afterwards.
-    const summary = await this.jjWsR(sb.path, targetPath, ["diff", "-r", sb.branch, "--summary"]);
-    const filesChanged = lines(summary).length;
+    // Snapshot the source workspace before resolving its bookmark.
+    await this.jjWsR(sb.path, targetPath, ["diff", "-r", sb.branch, "--summary"]);
     // Squash a duplicate: rewriting the source would move its bookmark even
     // on conflict. Never restore an operation, which can erase concurrent work.
     const source = (await jj(targetPath, ["log", "-r", sb.branch, "--no-graph", "-T", "commit_id"], this.env)).trim();
-    const marker = readMarker(join(sb.repoRoot, ".jj", MARKER_NAME), this.logger);
-    if (marker[sb.branch] === source) return { ok: true, filesChanged: 0 };
     const duplicate = await jjRun(targetPath, ["--config", 'templates.commit_summary="commit_id"', "duplicate", source], this.env);
     const duplicateId = /\bas ([0-9a-f]{40,64})\s*$/.exec(duplicate.stderr)?.[1];
     if (duplicate.code !== 0 || duplicateId === undefined) {
@@ -259,6 +252,8 @@ export class JjSandbox implements SandboxBackend {
         error: `cannot check squash conflicts; manual recovery may be required: ${conflicts.stderr.trim()}`,
       };
     }
+    const filesChanged = lines(await this.jjWs(targetPath, ["diff", "-r", "@", "--summary"])).length;
+    if (filesChanged === 0) return { ok: true, filesChanged: 0 };
     let commitSha: string | undefined;
     if (opts.commit) {
       await jj(targetPath, ["describe", "-m", opts.message ?? `squash ${sb.branch}`], this.env);
@@ -272,7 +267,7 @@ export class JjSandbox implements SandboxBackend {
     return { ok: true, commitSha, filesChanged };
   }
 
-  async remove(sb: Sandbox, opts: { keepBranch: boolean }): Promise<void> {
+  async remove(sb: Sandbox, opts: { keepBranch: boolean }, allowUnmarkedEmpty = false): Promise<void> {
     // Absolute roots outside the main workspace are supported; registration
     // and repository-pointer checks below establish ownership before removal.
     const mainRoot = resolve(sb.repoRoot);
@@ -299,6 +294,34 @@ export class JjSandbox implements SandboxBackend {
         throw new Error(`refusing to remove sandbox: cannot verify workspace ${path}: ${message(err)}`);
       }
       if (!matches) throw new Error(`refusing to remove sandbox: workspace ${path} belongs to another repository`);
+      // Compare the pre-snapshot working-copy commit to the snapshot produced by
+      // file list. Refuse even if the snapshot succeeded: callers may delete the
+      // bookmark as well, and those edits were not part of the finalized work.
+      const before = (await jj(path, ["--ignore-working-copy", "log", "-r", "@", "--no-graph", "-T", "commit_id"], this.env)).trim();
+      const tracked = new Set((await this.jjWs(path, ["file", "list", "-r", "@", "-T", 'path ++ "\\0"'])).split("\0").filter(Boolean));
+      const after = (await jj(path, ["log", "-r", "@", "--no-graph", "-T", "commit_id"], this.env)).trim();
+      if (before !== after) throw new Error(`refusing to remove sandbox: workspace ${path} contained unsnapshotted changes`);
+      if (opts.keepBranch) {
+        const bookmark = await jjRun(path, ["--ignore-working-copy", "log", "-r", sb.branch, "--no-graph", "-T", "commit_id"], this.env);
+        if (bookmark.code !== 0 || bookmark.stdout.trim() !== after) {
+          const diff = allowUnmarkedEmpty ? await this.jjWs(path, ["diff", "--from", sb.base, "--to", "@", "--summary"]) : undefined;
+          if (diff === undefined || diff.trim() !== "")
+            throw new Error(`refusing to remove sandbox: bookmark ${sb.branch} does not point at the workspace change`);
+        }
+      }
+      const gitDir = existsSync(join(mainRoot, ".git")) ? await gitRun(path, ["rev-parse", "--git-common-dir"], this.env) : undefined;
+      const ownedGit = gitDir?.code === 0 && realpathSync(resolve(path, gitDir.stdout.trim())) === realpathSync(join(mainRoot, ".git"));
+      const check = (dir: string, prefix: string): void => {
+        const entries = readdirSync(dir, { withFileTypes: true });
+        if (prefix !== "" && entries.length === 0) throw new Error(`refusing to remove sandbox: untracked directory ${prefix}`);
+        for (const entry of entries) {
+          if (prefix === "" && (entry.name === ".jj" || (entry.name === ".git" && entry.isFile() && ownedGit))) continue;
+          const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+          if (entry.isDirectory()) check(join(dir, entry.name), rel);
+          else if (!tracked.has(rel)) throw new Error(`refusing to remove sandbox: untracked or ignored file ${rel}`);
+        }
+      };
+      check(path, "");
     }
     if (registered !== undefined) await jj(mainRoot, ["workspace", "forget", sb.branch], this.env);
     if (existsSync(path)) rmSync(path, { recursive: true, force: true });
@@ -438,7 +461,7 @@ export class JjSandbox implements SandboxBackend {
   // and use the same ownership checks as normal removal for the directory.
   private async cleanupFailedCreate(sb: Sandbox): Promise<void> {
     try {
-      await this.remove(sb, { keepBranch: true });
+      await this.remove(sb, { keepBranch: true }, true);
     } catch (err) {
       this.logger.error("sandbox", err);
     }

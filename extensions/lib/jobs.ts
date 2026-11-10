@@ -56,6 +56,7 @@ export interface JobDeps {
   closeGraceMs?: number;
 }
 
+const MAX_TIMER_MS = 2 ** 31 - 1;
 const RING_BYTES = 64 * 1024;
 const MAX_LOG_BYTES = 64 * 1024 * 1024;
 const MAX_PATTERN_CHARS = 200;
@@ -210,10 +211,7 @@ export class JobManager {
     child.on("exit", (code, signal) => this.onExit(st, code, signal));
     child.on("close", () => this.finalize(st));
     if (opts.timeoutSeconds && opts.timeoutSeconds > 0) {
-      st.timeoutTimer = setTimeout(() => {
-        st.timedOut = true;
-        this.requestKill(st);
-      }, opts.timeoutSeconds * 1000);
+      this.scheduleTimeout(st, this.now() + opts.timeoutSeconds * 1000);
     }
     return job;
   }
@@ -310,7 +308,25 @@ export class JobManager {
     return { text: buf.toString("utf8", start, end), nextOffset: from + end, status: st.job.status };
   }
 
+  private scheduleTimeout(st: Internal, deadline: number): void {
+    const remaining = deadline - this.now();
+    st.timeoutTimer = setTimeout(
+      () => {
+        st.timeoutTimer = undefined;
+        if (this.now() < deadline) {
+          this.scheduleTimeout(st, deadline);
+        } else {
+          st.timedOut = true;
+          this.requestKill(st);
+        }
+      },
+      Math.max(0, Math.min(remaining, MAX_TIMER_MS)),
+    );
+  }
+
   private requestKill(st: Internal): void {
+    if (st.timeoutTimer) clearTimeout(st.timeoutTimer);
+    st.timeoutTimer = undefined;
     const pid = st.job.pid;
     if (pid === undefined || st.job.status !== "running" || st.exitSeen || st.killRequested) return;
     st.killRequested = true;
